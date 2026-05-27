@@ -4,12 +4,21 @@ Lógica de negocio para importación, consulta y baja de alumnos.
 """
 import pdfplumber
 import re
+import secrets
+import string
 from io import BytesIO
 from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 import models
+from rabbitmq_manager import RabbitMQRpcClient
+
+
+def _generar_clave_unica(length=8) -> str:
+    """Genera una contraseña aleatoria segura."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for i in range(length))
 
 
 def _extraer_nrc_desde_pdf(contenido: bytes) -> str | None:
@@ -51,17 +60,13 @@ def _extraer_correos_alumnos_desde_pdf(contenido: bytes) -> List[str]:
     return correos
 
 
-def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session) -> List[models.Alumno]:
+def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session) -> List[dict]:
     """
     Lee un archivo PDF con la lista de alumnos inscritos en un NRC.
-    El PDF debe tener el formato "Resumen de lista de clase" de BUAP.
-    Si el PDF contiene el NRC en el encabezado, lo usa automáticamente;
-    si no, usa el expected_nrc recibido en la URL.
-
-    Returns:
-        Lista de nuevos objetos Alumno creados.
+    Retorna lista de diccionarios con info del alumno y su clave generada.
     """
-    alumnos_nuevos = []
+    alumnos_procesados = []
+    rpc_client = RabbitMQRpcClient()
     correos = _extraer_correos_alumnos_desde_pdf(contenido)
     alumno_index = 0
 
@@ -73,7 +78,7 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
             if not text:
                 continue
 
-            # Extraer NRC del encabezado (solo en la primera página donde aparece)
+            # Extraer NRC del encabezado
             nrc_match = re.search(r'NRC:\s*(\d+)', text)
             if nrc_match:
                 current_nrc = nrc_match.group(1)
@@ -88,7 +93,7 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                 if not line_str:
                     continue
 
-                # Línea de alumno: <num> <NOMBRE> <matricula-9-digits> **Inscrito por Web** <nivel> <creditos>
+                # Línea de alumno: <num> <NOMBRE> <matricula-9-digits> **Inscrito por Web** ...
                 match = re.search(
                     r'^(\d+)\s+(.*?)\s+(\d{9})\s+\*\*Inscrito por Web\*\*\s+(.+?)\s+([\d\.]+)',
                     line_str
@@ -97,11 +102,13 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                     numero_registro = int(match.group(1))
                     nombre = match.group(2).strip()
                     matricula = match.group(3).strip()
-                    email_match = re.search(r'[\w.+-]+@[\w.-]+\.\w+', line_str)
-                    email = email_match.group(0) if email_match else (
-                        correos[alumno_index] if alumno_index < len(correos) else None
-                    )
+                    
+                    # Usar el correo extraído de los hipervínculos si está disponible
+                    email = correos[alumno_index] if alumno_index < len(correos) else f"{matricula}@alumno.buap.mx"
                     alumno_index += 1
+
+                    # Generar clave única para ms-auth
+                    clave = f"AGM-{_generar_clave_unica()}"
 
                     alumno = (
                         db.query(models.Alumno)
@@ -111,6 +118,8 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                         )
                         .first()
                     )
+                    
+                    es_nuevo = False
                     if not alumno:
                         alumno = models.Alumno(
                             numero_registro=numero_registro,
@@ -121,19 +130,31 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                             activo=True,
                         )
                         db.add(alumno)
-                        alumnos_nuevos.append(alumno)
+                        es_nuevo = True
                     else:
                         alumno.numero_registro = numero_registro
                         alumno.nombre = nombre
-                        if email:
-                            alumno.email = email
+                        alumno.email = email
                         alumno.activo = True
+                    
+                    db.flush()
+
+                    # Registrar en Auth
+                    auth_res = rpc_client.call('rpc_auth_queue', 'create_user', {
+                        "email": email,
+                        "password": clave,
+                        "rol": "ALUMNO"
+                    })
+
+                    alumnos_procesados.append({
+                        "alumno": alumno,
+                        "clave": clave if (es_nuevo or (auth_res and auth_res.get("success"))) else "Ya registrado",
+                        "es_nuevo": es_nuevo
+                    })
 
                     last_student = alumno
 
                 elif last_student:
-                    # Posible continuación del nombre en la siguiente línea
-                    # (solo líneas en mayúsculas sin números ni keywords del PDF)
                     if (
                         not re.match(r'^\d+', line_str)
                         and 'Clase' not in line_str
@@ -141,14 +162,14 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                         and 'Regresar' not in line_str
                         and '©' not in line_str
                         and 'VERSIÓN' not in line_str
-                        and re.match(r'^[A-Z\s\.,]+$', line_str)
+                        and re.match(r'^[A-ZÁÉÍÓÚÑÜ\s\.,]+$', line_str)
                     ):
                         last_student.nombre += " " + line_str
+                        if alumnos_procesados:
+                            alumnos_procesados[-1]["alumno"].nombre = last_student.nombre
 
     db.commit()
-    for a in alumnos_nuevos:
-        db.refresh(a)
-    return alumnos_nuevos
+    return alumnos_procesados
 
 
 def listar_alumnos_por_materia(nrc: str, db: Session) -> List[models.Alumno]:
