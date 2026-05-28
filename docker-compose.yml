@@ -178,6 +178,13 @@ services:
       dockerfile: Dockerfile
     container_name: agm_api_gateway
     restart: always
+    environment:
+      - MS_AUTH_HOST=ms-auth
+      - MS_PERIODOS_HOST=ms-periodos-materias
+      - MS_DOCENTES_HOST=ms-docentes
+      - MS_ASISTENCIAS_HOST=ms-asistencias
+      - MS_REPORTES_HOST=ms-reportes
+      - MS_CALIFICACIONES_HOST=ms-calificaciones
     ports:
       - "80:80"
     depends_on:
