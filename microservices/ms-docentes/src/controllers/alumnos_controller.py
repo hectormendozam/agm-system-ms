@@ -145,6 +145,62 @@ async def importar_alumnos_auto(
     )
 
 
+@router.post(
+    "/importar-excel/{materiaId}",
+    response_model=ImportacionResponse,
+    summary="Importar lista de alumnos desde Excel",
+    description=(
+        "Acepta un archivo .xlsx con columnas matricula, nombre y email (opcional). "
+        "Las cabeceras se detectan automáticamente. Mínimo requerido: columnas matricula y nombre."
+    ),
+)
+async def importar_alumnos_excel(
+    materiaId: str = Path(..., description="NRC de la materia"),
+    archivo: UploadFile = File(None),
+    file: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+):
+    archivo = archivo or file
+    if archivo is None:
+        raise HTTPException(status_code=400, detail="Se requiere un archivo Excel (.xlsx)")
+    if not archivo.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos Excel (.xlsx, .xls)")
+
+    contenido = await archivo.read()
+    try:
+        alumnos_procesados = alumnos_service.importar_alumnos_desde_excel(contenido, materiaId, db)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Error al procesar el Excel: {str(exc)}")
+
+    if alumnos_procesados:
+        import os
+        from src.notifications import rabbitmq as _rmq
+        from src.notifications import send_bienvenida_notif
+        token = authorization.replace("Bearer ", "") if authorization else "no-token"
+        materia = db.query(models.MateriaDocente).filter(models.MateriaDocente.nrc == materiaId).first()
+        materia_nombre = materia.nombre_materia if materia else f"NRC {materiaId}"
+        whitelist = [e.strip().lower() for e in os.getenv("NOTIFY_ALUMNO_WHITELIST", "").split(",") if e.strip()]
+
+        nuevos = [item for item in alumnos_procesados if item["es_nuevo"]]
+        if nuevos:
+            _rmq.publish_to_queue(
+                "docentes_import_jobs_queue",
+                {
+                    "job_type": "crear_usuarios_alumnos",
+                    "alumno_ids": [item["alumno"].id for item in nuevos],
+                    "materia_nombre": materia_nombre,
+                    "token": token,
+                    "whitelist": whitelist,
+                },
+            )
+
+    return ImportacionResponse(
+        mensaje=f"Importación Excel para NRC {materiaId} completada",
+        registros_importados=len(alumnos_procesados),
+    )
+
+
 @router.get(
     "/",
     summary="Listar alumnos activos",

@@ -172,6 +172,113 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
     return alumnos_procesados
 
 
+def importar_alumnos_desde_excel(contenido: bytes, nrc: str, db: Session) -> List[dict]:
+    """
+    Importa alumnos desde un archivo Excel/CSV.
+    Detecta las columnas automáticamente buscando cabeceras que contengan
+    'matricula', 'nombre', 'email' (insensible a mayúsculas/acentos).
+    Columnas mínimas requeridas: matricula + nombre.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.load_workbook(BytesIO(contenido), data_only=True)
+    ws = wb.active
+
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise ValueError("El archivo Excel está vacío")
+
+    # Detectar fila de cabeceras (primera fila no vacía)
+    header_row_idx = None
+    col_matricula = col_nombre = col_email = None
+
+    for i, row in enumerate(rows):
+        cells = [str(c).lower().strip() if c else "" for c in row]
+        for j, cell in enumerate(cells):
+            if any(k in cell for k in ("matricul", "matrícula", "mat")):
+                col_matricula = j
+            if any(k in cell for k in ("nombre", "name", "alumno")):
+                col_nombre = j
+            if any(k in cell for k in ("email", "correo", "mail")):
+                col_email = j
+        if col_matricula is not None and col_nombre is not None:
+            header_row_idx = i
+            break
+
+    if header_row_idx is None:
+        # Sin cabeceras detectadas: asumir columnas por posición
+        # Columna 0 = matricula, 1 = nombre, 2 = email (opcional)
+        col_matricula, col_nombre, col_email = 0, 1, 2
+        data_rows = rows
+    else:
+        data_rows = rows[header_row_idx + 1:]
+
+    rpc_client = RabbitMQRpcClient()
+    alumnos_procesados = []
+
+    for row in data_rows:
+        if not row or all(c is None for c in row):
+            continue
+
+        def _cell(idx):
+            if idx is None or idx >= len(row):
+                return None
+            val = row[idx]
+            return str(val).strip() if val is not None else None
+
+        matricula = _cell(col_matricula)
+        nombre    = _cell(col_nombre)
+
+        if not matricula or not nombre:
+            continue
+
+        # Normalizar matrícula (solo dígitos si tiene prefijo/sufijo)
+        matricula_digits = re.sub(r"\D", "", matricula)
+        matricula = matricula_digits if len(matricula_digits) >= 6 else matricula
+
+        email_val = _cell(col_email)
+        email = email_val if email_val and "@" in email_val else f"{matricula}@alumno.buap.mx"
+
+        clave = f"AGM-{_generar_clave_unica()}"
+
+        alumno = (
+            db.query(models.Alumno)
+            .filter(models.Alumno.matricula == matricula, models.Alumno.nrc == nrc)
+            .first()
+        )
+        es_nuevo = alumno is None
+        if es_nuevo:
+            alumno = models.Alumno(
+                matricula=matricula,
+                nombre=nombre,
+                email=email,
+                nrc=nrc,
+                activo=True,
+            )
+            db.add(alumno)
+        else:
+            alumno.nombre  = nombre
+            alumno.email   = email
+            alumno.activo  = True
+        db.flush()
+
+        auth_res = rpc_client.call("rpc_auth_queue", "create_user", {
+            "email": email,
+            "password": clave,
+            "rol": "ALUMNO",
+        })
+
+        alumnos_procesados.append({
+            "alumno": alumno,
+            "clave": clave if (es_nuevo or (auth_res and auth_res.get("success"))) else "Ya registrado",
+            "es_nuevo": es_nuevo,
+        })
+
+    db.commit()
+    return alumnos_procesados
+
+
 def listar_alumnos_por_materia(nrc: str, db: Session) -> List[models.Alumno]:
     """Retorna sólo alumnos ACTIVOS de un NRC."""
     return (
