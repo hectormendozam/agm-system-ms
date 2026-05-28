@@ -13,6 +13,8 @@ services:
     volumes:
       - agm_db_data:/var/lib/postgresql/data
       - ./infrastructure/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # SMTP para captura de correos en local
   smtp4dev:
     image: rnwood/smtp4dev
     container_name: agm_smtp
@@ -67,8 +69,6 @@ services:
     restart: always
     ports:
       - "8005:8005"
-    env_file:
-      - ./microservices/ms-asistencias/.env
     environment:
       - DATABASE_URL=postgresql://postgres:root@postgres-db:5432/attendance_db
       - REDIS_URL=redis://redis-db:6379/0
@@ -84,14 +84,13 @@ services:
         dockerfile: Dockerfile
       container_name: agm_ms_notificaciones
       restart: always
-      env_file:
-        - ./microservices/ms-notificaciones/.env
       environment:
         - DATABASE_URL=postgresql://postgres:root@postgres-db:5432/agm_notificaciones_db
         - SMTP_HOST=smtp4dev
+        - SMTP_PORT=25
         - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-        - BREVO_API_KEY=${BREVO_API_KEY}
-        - MAIL_FROM=${MAIL_FROM}
+        - MAIL_FROM=Sistema AGM <noreply@agm.local>
+        - FRONTEND_URL=http://localhost:4200
       depends_on:
         - postgres-db
         - smtp4dev
@@ -125,9 +124,8 @@ services:
     restart: always
     ports:
       - "8004:8004"
-    env_file:
-      - ./microservices/ms-calificaciones/.env
     environment:
+      - DATABASE_URL=postgresql://postgres:root@postgres-db:5432/agm_calificaciones_db
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     depends_on:
       - postgres-db
@@ -139,8 +137,6 @@ services:
       dockerfile: Dockerfile
     container_name: agm_ms_periodos_materias
     restart: always
-    env_file:
-      - ./microservices/ms-periodos-materias/.env
     environment:
       - SECRET_KEY=clave_super_secreta_desarrollo_agm
       - ALLOWED_HOSTS=localhost,127.0.0.1,ms-periodos-materias
@@ -184,7 +180,7 @@ services:
     container_name: agm_api_gateway
     restart: always
     ports:
-      - "80:80"
+      - "9000:9000"
     environment:
       - MS_AUTH_HOST=ms-auth
       - MS_PERIODOS_HOST=ms-periodos-materias
@@ -192,7 +188,7 @@ services:
       - MS_CALIFICACIONES_HOST=ms-calificaciones
       - MS_ASISTENCIAS_HOST=ms-asistencias
       - MS_REPORTES_HOST=ms-reportes
-      - PORT=80
+      - PORT=9000
     depends_on:
       - ms-auth
       - ms-periodos-materias
