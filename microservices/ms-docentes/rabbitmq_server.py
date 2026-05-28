@@ -126,8 +126,18 @@ class DocentesRpcHandlers:
     def is_docente_en_materia(self, data):
         docente_id = data.get("docenteId")
         materia_id = data.get("materiaId")
+        docente_email = data.get("docenteEmail")
         db = SessionLocal()
         try:
+            # Si viene email, resolver primero el docente_id real de ms-docentes
+            # (el JWT usa el id de ms-auth que puede diferir del id de ms-docentes)
+            if docente_email:
+                docente = db.query(models.Docente).filter(
+                    models.Docente.email == docente_email
+                ).first()
+                if docente:
+                    docente_id = str(docente.id)
+
             materia = db.query(models.MateriaDocente).filter(
                 models.MateriaDocente.docente_id == int(docente_id),
                 (models.MateriaDocente.id == int(materia_id)) |

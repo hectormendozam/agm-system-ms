@@ -147,6 +147,7 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=root
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - MS_DOCENTES_HOST=ms-docentes
     ports:
       - "8001:8000"
     depends_on:

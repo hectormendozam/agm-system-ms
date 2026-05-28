@@ -50,7 +50,7 @@ def crear_actividad(
     user: dict = Depends(require_roles("Docente", "Administrador")),
 ):
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), actividad.materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), actividad.materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -90,7 +90,7 @@ def listar_actividades(
 ):
     # --- Candado Anti-IDOR para lectura ---
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -122,7 +122,7 @@ def registrar_calificacion(
         raise HTTPException(status_code=404, detail="Actividad no encontrada.")
 
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id))
+        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id), user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -161,7 +161,7 @@ async def cargar_calificaciones_excel(
         raise HTTPException(status_code=404, detail="Actividad no encontrada.")
 
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id))
+        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id), user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -272,7 +272,7 @@ def calcular_promedio_final(
     user: dict = Depends(require_roles("Docente", "Administrador")),
 ):
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -326,7 +326,7 @@ def obtener_ponderaciones(
     user: dict = Depends(require_roles("Docente", "Administrador")),
 ):
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -346,7 +346,7 @@ def crear_ponderaciones(
     user: dict = Depends(require_roles("Docente", "Administrador")),
 ):
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -418,7 +418,7 @@ def actualizar_ponderacion(
         raise HTTPException(status_code=404, detail="Actividad no encontrada.")
 
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id))
+        es_su_materia = validar_propiedad_materia(str(user["id"]), str(actividad.materia_id), user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,
@@ -448,7 +448,7 @@ def obtener_concentrado(
     user: dict = Depends(require_roles("Docente", "Administrador")),
 ):
     if user["rol"] == "Docente":
-        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id)
+        es_su_materia = validar_propiedad_materia(str(user["id"]), materia_id, user.get("email"))
         if not es_su_materia:
             raise HTTPException(
                 status_code=403,

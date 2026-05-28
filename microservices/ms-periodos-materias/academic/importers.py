@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from pypdf import PdfReader
@@ -90,8 +91,18 @@ def _is_salon_token(token: str) -> bool:
     )
 
 
+def _normalize_for_hash(text: str) -> str:
+    """Remove accents and all non-letter chars so OCR variants hash identically."""
+    s = "".join(
+        c for c in unicodedata.normalize("NFD", text)
+        if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"[^a-zA-Z]", "", s).lower()
+
+
 def _fallback_docente_id(docente_text: str) -> int:
-    digest = hashlib.sha1(docente_text.encode("utf-8")).hexdigest()
+    normalized = _normalize_for_hash(docente_text) or docente_text
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
     return int(digest[:8], 16) % 2_000_000_000 or 1
 
 
@@ -112,8 +123,14 @@ def _extract_docente_id(docente_text: str, docente_id_default: int | None) -> in
 
 
 def _clean_docente_nombre(docente_text: str) -> str:
+    # Remove digit tokens
     cleaned = re.sub(r"\b\d+\b", " ", docente_text).strip()
-    return re.sub(r"\s{2,}", " ", cleaned)
+    # Remove OCR dash separators ("APELLIDO - NOMBRE" → "APELLIDO NOMBRE")
+    cleaned = re.sub(r"\s*-\s*", " ", cleaned)
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    # Title-case so it reads as a real name
+    return cleaned.title() if cleaned else ""
 
 
 def _split_record_blocks(text: str) -> list[str]:
@@ -219,6 +236,33 @@ def parse_materia_rows(text: str, docente_id_default: int | None = None) -> list
     return list(aggregated.values())
 
 
+def _fetch_docentes_map() -> dict[str, str]:
+    """Fetch clean docente names from ms-docentes and return {normalized_hash: clean_name}."""
+    import os
+    import urllib.request
+    import json
+    host = os.getenv("MS_DOCENTES_HOST", "ms-docentes")
+    url = f"http://{host}:8003/docentes/"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        docentes = data.get("data", data) if isinstance(data, dict) else data
+        if isinstance(docentes, dict):
+            docentes = docentes.get("results", [])
+        return {_normalize_for_hash(d["nombre"]): d["nombre"] for d in docentes if d.get("nombre")}
+    except Exception:
+        return {}
+
+
+def _resolve_names(rows: list[ImportRow], docentes_map: dict[str, str]) -> None:
+    """Replace OCR-corrupted docente names with clean versions from ms-docentes."""
+    for row in rows:
+        norm = _normalize_for_hash(row.docente_nombre)
+        if norm and norm in docentes_map:
+            row.docente_nombre = docentes_map[norm]
+            row.docente_id = _fallback_docente_id(row.docente_nombre)
+
+
 def import_materias_from_text(
     text: str,
     periodo_id: int,
@@ -230,6 +274,10 @@ def import_materias_from_text(
     rows = parse_materia_rows(text, docente_id_default=docente_id_default)
     if not rows:
         raise ValueError("No se detectaron filas válidas para importar.")
+
+    docentes_map = _fetch_docentes_map()
+    if docentes_map:
+        _resolve_names(rows, docentes_map)
 
     created = 0
     updated = 0

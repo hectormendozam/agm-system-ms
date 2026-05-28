@@ -259,8 +259,9 @@ def _finalizar_registro(registro: dict) -> List[dict]:
 def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
     """
     Procesa el PDF de programación académica y persiste los datos en PostgreSQL.
-    Estrategia: upsert por nombre de docente + NRC para evitar duplicados en
-    reimportaciones.
+    Estrategia: upsert por nombre normalizado de docente + NRC para evitar
+    duplicados en reimportaciones y para emparejar con docentes ya existentes
+    importados desde el directorio (que tienen nombre con acentos/formato distinto).
 
     Returns:
         Número de registros de materias importados.
@@ -295,21 +296,25 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
         if fila["horario"] not in registro["horarios"]:
             registro["horarios"].append(fila["horario"])
 
+    # Pre-cargar todos los docentes para comparación normalizada (igual que en importar_directorio)
+    todos_docentes = db.query(models.Docente).all()
+    docentes_map: dict[str, models.Docente] = {_normalizar_nombre(d.nombre): d for d in todos_docentes}
+
     for fila in agrupados.values():
         nombre_docente = fila["docente_nombre"]
         if not nombre_docente:
             continue
 
-        # 1. Buscar o crear el docente
-        docente = (
-            db.query(models.Docente)
-            .filter(models.Docente.nombre == nombre_docente)
-            .first()
-        )
+        # 1. Buscar el docente por nombre normalizado para emparejar con registros del directorio
+        nombre_norm = _normalizar_nombre(nombre_docente)
+        docente = docentes_map.get(nombre_norm)
+
         if not docente:
+            # No existe: crear nuevo docente con el nombre tal como viene del PDF
             docente = models.Docente(nombre=nombre_docente, activo=True)
             db.add(docente)
-            db.flush()   # obtenemos el id sin hacer commit todavía
+            db.flush()
+            docentes_map[nombre_norm] = docente
         else:
             docente.activo = True
 
@@ -334,7 +339,6 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
             db.add(materia)
             registros_importados += 1
         else:
-            # Actualiza datos si ya existía
             materia.nombre_materia = fila["nombre_materia"]
             materia.horario = " ; ".join(fila["horarios"])
 
@@ -375,16 +379,17 @@ def dar_de_baja_docente(docente_id: int, db: Session) -> models.Docente:
 import unicodedata
 
 def _normalizar_nombre(nombre: str) -> str:
-    """Normaliza un nombre: quita acentos, convierte a minúsculas y limpia espacios/puntuación."""
+    """Normaliza un nombre para comparación tolerante a OCR.
+    Quita acentos, guiones, espacios y cualquier carácter no-letra.
+    Así 'M ENDEZ', 'MENDEZ' y 'Méndez' producen 'mendez'."""
     if not nombre:
         return ""
-    # Quitar acentos
+    # Quitar acentos/diacríticos
     s = ''.join(c for c in unicodedata.normalize('NFD', nombre)
                if unicodedata.category(c) != 'Mn')
-    # Quitar guiones y puntuación, pasar a minúsculas
-    s = re.sub(r'[^a-zA-Z\s]', ' ', s).lower()
-    # Limpiar espacios
-    return ' '.join(s.split())
+    # Dejar solo letras y pasar a minúsculas (elimina espacios, guiones, puntuación)
+    s = re.sub(r'[^a-zA-Z]', '', s).lower()
+    return s
 
 def _parsear_pagina_directorio(pagina) -> List[dict]:
     """
