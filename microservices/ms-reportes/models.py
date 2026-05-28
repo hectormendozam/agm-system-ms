@@ -30,6 +30,7 @@ class EstadisticaMateria(Base):
     total_alumnos         = Column(Integer, default=0)
     promedio_general      = Column(Float, default=0.0)
     porcentaje_aprobados  = Column(Float, default=0.0)  # 0-100
+    porcentaje_asistencia = Column(Float, default=0.0)  # 0-100
     fecha_registro        = Column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -1,10 +1,25 @@
 import os
 import logging
+import requests as _requests
 from rabbitmq_manager import RabbitMQRpcClient, RabbitMQManager
 
 logger = logging.getLogger("[RabbitMQ-Client ms-reportes]")
 rpc_client = RabbitMQRpcClient()
 event_manager = RabbitMQManager()
+
+_PERIODOS_BASE = os.getenv("MS_PERIODOS_URL", "http://ms-periodos-materias:8000")
+
+def _materia_rest_by_nrc(nrc: str) -> dict | None:
+    """Fallback REST interno a ms-periodos-materias (sin auth) cuando RabbitMQ falla."""
+    try:
+        r = _requests.get(f"{_PERIODOS_BASE}/api/internal/materias/{nrc}/", timeout=5)
+        if not r.ok:
+            return None
+        data = r.json()
+        return data.get("data") if data.get("success") else None
+    except Exception as e:
+        logger.error(f"Fallback REST get_materia_by_nrc falló: {e}")
+        return None
 
 def get_materia_by_id(materia_id: int) -> dict | None:
     """Consulta ms-periodos-materias vía RPC"""
@@ -22,7 +37,7 @@ def get_materia_by_id(materia_id: int) -> dict | None:
         return None
 
 def get_materia_by_nrc(nrc: str) -> dict | None:
-    """Consulta ms-periodos-materias vía RPC"""
+    """Consulta ms-periodos-materias vía RPC, con fallback REST."""
     try:
         response = rpc_client.call(
             queue_name='rpc_periodos_queue',
@@ -33,8 +48,8 @@ def get_materia_by_nrc(nrc: str) -> dict | None:
             return response.get("data")
         return None
     except Exception as e:
-        logger.error(f"Error calling get_materia_by_nrc: {e}")
-        return None
+        logger.error(f"RPC get_materia_by_nrc falló, usando fallback REST: {e}")
+        return _materia_rest_by_nrc(nrc)
 
 def get_periodo_activo() -> dict | None:
     """Consulta ms-periodos-materias vía RPC"""
@@ -112,6 +127,21 @@ def publicar_reporte_generado(tipo: str, materia_id: str, formato: str, docente_
     except Exception as e:
         logger.error(f"Error publicando evento reporte_generado: {e}")
 
+
+def get_calificaciones_stats(materia_id: str) -> dict | None:
+    """Consulta ms-calificaciones vía RPC para estadísticas de calificaciones"""
+    try:
+        response = rpc_client.call(
+            queue_name='rpc_calificaciones_queue',
+            action='get_estadisticas_materia',
+            data={"materia_id": materia_id}
+        )
+        if response.get("success"):
+            return response
+        return None
+    except Exception as e:
+        logger.error(f"Error calling get_calificaciones_stats: {e}")
+        return None
 
 def construir_sesiones_asistencia(alumnos: list, materia_id: str) -> list:
     """

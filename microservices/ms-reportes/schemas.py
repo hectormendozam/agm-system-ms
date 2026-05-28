@@ -6,27 +6,29 @@ from datetime import datetime
 # ── Estadísticas de Materia (docente) ─────────────────────────────────────────
 
 class EstadisticaMateriaCreate(BaseModel):
-    materia_id:           str
-    materia_nombre:       str
-    materia_nrc:          str
-    periodo_nombre:       str
-    docente_id:           str
-    total_alumnos:        int
-    promedio_general:     float
-    porcentaje_aprobados: float
+    materia_id:            str
+    materia_nombre:        str
+    materia_nrc:           str
+    periodo_nombre:        str
+    docente_id:            str
+    total_alumnos:         int
+    promedio_general:      float
+    porcentaje_aprobados:  float
+    porcentaje_asistencia: float = 0.0
 
 
 class EstadisticaMateriaResponse(BaseModel):
-    id:                   int
-    materia_id:           str
-    materia_nombre:       str
-    materia_nrc:          str
-    periodo_nombre:       str
-    docente_id:           str
-    total_alumnos:        int
-    promedio_general:     float
-    porcentaje_aprobados: float
-    fecha_registro:       datetime
+    id:                    int
+    materia_id:            str
+    materia_nombre:        str
+    materia_nrc:           str
+    periodo_nombre:        str
+    docente_id:            str
+    total_alumnos:         int
+    promedio_general:      float
+    porcentaje_aprobados:  float
+    porcentaje_asistencia: float = 0.0
+    fecha_registro:        datetime
 
     class Config:
         from_attributes = True

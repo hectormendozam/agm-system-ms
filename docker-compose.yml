@@ -167,6 +167,7 @@ services:
       - DATABASE_URL=postgresql://postgres:root@postgres-db:5432/reports_db
       - JWT_SECRET=clave_super_secreta_desarrollo_agm
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - MS_PERIODOS_URL=http://ms-periodos-materias:8000
     depends_on:
       - postgres-db
       - ms-periodos-materias

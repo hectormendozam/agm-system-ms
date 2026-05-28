@@ -340,6 +340,87 @@ def asistencias_hoy(
 
 
 @app.get(
+    "/sesiones/activa",
+    summary="Devuelve la sesión activa del docente (para recuperar estado al navegar)"
+)
+def get_sesion_activa_docente(
+    docente_id: str = Query(...),
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_roles("Docente", "Administrador")),
+):
+    sesion = (
+        db.query(models.SesionAsistencia)
+        .filter(
+            models.SesionAsistencia.docente_id == str(docente_id),
+            models.SesionAsistencia.activa == True,
+        )
+        .order_by(models.SesionAsistencia.fecha_creacion.desc())
+        .first()
+    )
+
+    if not sesion:
+        return {"success": True, "data": None, "message": "No hay sesión activa"}
+
+    sesion_key = f"sesion_activa:{sesion.materia_id}"
+    if not redis_client.exists(sesion_key):
+        sesion.activa = False
+        db.commit()
+        return {"success": True, "data": None, "message": "Sesión expirada"}
+
+    return {
+        "success": True,
+        "data": {
+            "id": sesion.id,
+            "sesion_id": sesion.id,
+            "materia_id": sesion.materia_id,
+            "docente_id": sesion.docente_id,
+        },
+        "message": "Sesión activa encontrada",
+    }
+
+
+@app.get(
+    "/asistencias/alumno/{alumno_id}",
+    summary="Resumen de asistencia de un alumno por materia"
+)
+def asistencias_alumno(
+    alumno_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    registros = db.query(models.RegistroAsistencia).filter(
+        models.RegistroAsistencia.alumno_id == str(alumno_id)
+    ).all()
+
+    agrupado: dict = {}
+    for r in registros:
+        mid = r.materia_id
+        if mid not in agrupado:
+            agrupado[mid] = {"presentes": 0, "retardos": 0}
+        if r.estado == "Presente":
+            agrupado[mid]["presentes"] += 1
+        elif r.estado == "Retardo":
+            agrupado[mid]["retardos"] += 1
+
+    resultado = []
+    for materia_id, counts in agrupado.items():
+        total_sesiones = db.query(models.SesionAsistencia).filter(
+            models.SesionAsistencia.materia_id == materia_id
+        ).count()
+        asistidos = counts["presentes"] + counts["retardos"]
+        porcentaje = round(asistidos / total_sesiones * 100, 1) if total_sesiones > 0 else 0.0
+        resultado.append({
+            "materia_id": materia_id,
+            "presentes": counts["presentes"],
+            "retardos": counts["retardos"],
+            "total_sesiones": total_sesiones,
+            "porcentaje": porcentaje,
+        })
+
+    return {"success": True, "data": resultado, "message": "Asistencias obtenidas"}
+
+
+@app.get(
     "/asistencias/{materia_id}/historial",
     summary="Historial paginado de sesiones de una materia"
 )

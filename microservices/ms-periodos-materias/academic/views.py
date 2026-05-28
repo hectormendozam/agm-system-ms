@@ -1,6 +1,9 @@
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from django.db.models import Q
 
 from .notifications import send_cierre_materia
 from .importers import import_materias_from_pdf, import_materias_from_text
@@ -264,4 +267,22 @@ class MateriaViewSet(viewsets.ModelViewSet):
             data.append(item)
 
         return self._success(data, "Materias con nombre de periodo obtenidas correctamente.")
+
+
+class InternalMateriaByNrcView(APIView):
+    """Endpoint sin autenticación para llamadas internas entre microservicios."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, nrc):
+        materia = Materia.objects.filter(nrc=nrc).first()
+        if not materia:
+            return Response({"success": False, "message": "No encontrada"}, status=404)
+        return Response({"success": True, "data": {
+            "id": materia.id,
+            "nrc": materia.nrc,
+            "nombre": materia.nombre,
+            "docente_nombre": materia.docente_nombre,
+            "activo": materia.activo,
+            "periodo_id": materia.periodo_id,
+        }})
 

@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import engine, Base, get_db
@@ -16,6 +18,19 @@ from generadores import (
 )
 
 Base.metadata.create_all(bind=engine)
+
+# Migración inline: agrega columna si no existe (PostgreSQL)
+def _migrate():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE estadisticas_materia ADD COLUMN IF NOT EXISTS porcentaje_asistencia FLOAT DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+
+_migrate()
 
 
 def _start_rabbitmq():
@@ -92,7 +107,7 @@ def reporte_calificaciones(
     _user: dict = Depends(require_roles("Administrador", "Docente")),
 ):
     try:
-        materia_info = rabbitmq_client.get_materia_by_id(int(materia_id))
+        materia_info = rabbitmq_client.get_materia_by_nrc(materia_id)
         if not materia_info:
             raise HTTPException(
                 status_code=503,
@@ -204,7 +219,7 @@ def reporte_asistencias(
     _user: dict = Depends(require_roles("Administrador", "Docente")),
 ):
     try:
-        materia_info = rabbitmq_client.get_materia_by_id(int(materia_id))
+        materia_info = rabbitmq_client.get_materia_by_nrc(materia_id)
         if not materia_info:
             raise HTTPException(
                 status_code=503,
@@ -325,6 +340,65 @@ def estadisticas_docente(
         "message": f"{total} registro(s) encontrados para el docente {docente_id}",
         "data": {"total": total, "page": page, "limit": limit, "items": registros},
     }
+
+
+class AutoEstadisticasBody(BaseModel):
+    docente_id: str
+
+
+@app.post(
+    "/estadisticas/auto/{materia_nrc}",
+    response_model=schemas.RespuestaEstadistica,
+    status_code=201,
+    summary="Auto-calcular y registrar estadísticas al cerrar una materia",
+    tags=["Estadísticas"],
+)
+def auto_registrar_estadisticas(
+    materia_nrc: str,
+    body: AutoEstadisticasBody,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_roles("Administrador", "Docente")),
+):
+    materia = rabbitmq_client.get_materia_by_nrc(materia_nrc)
+    if not materia:
+        raise HTTPException(status_code=404, detail=f"Materia con NRC {materia_nrc} no encontrada.")
+
+    periodo = rabbitmq_client.get_periodo_activo()
+    periodo_nombre = periodo["nombre"] if periodo else "Período Activo"
+
+    calif_stats = rabbitmq_client.get_calificaciones_stats(materia_nrc)
+    promedio_general = float(calif_stats.get("promedio_general", 0.0)) if calif_stats else 0.0
+    total_alumnos    = int(calif_stats.get("total_alumnos_evaluados", 0)) if calif_stats else 0
+
+    asist_stats = rabbitmq_client.get_estadisticas_asistencia(materia_nrc)
+    porcentaje_asistencia = 0.0
+    if asist_stats:
+        porcentaje_asistencia = float(
+            asist_stats.get("porcentaje_asistencia")
+            or asist_stats.get("porcentaje_promedio")
+            or 0.0
+        )
+
+    porcentaje_aprobados = 0.0
+    if calif_stats and total_alumnos > 0:
+        aprobados = int(calif_stats.get("aprobados", 0))
+        porcentaje_aprobados = round(aprobados / total_alumnos * 100, 2)
+
+    nuevo = models.EstadisticaMateria(
+        materia_id=str(materia["id"]),
+        materia_nombre=materia["nombre"],
+        materia_nrc=materia_nrc,
+        periodo_nombre=periodo_nombre,
+        docente_id=body.docente_id,
+        total_alumnos=total_alumnos,
+        promedio_general=promedio_general,
+        porcentaje_aprobados=porcentaje_aprobados,
+        porcentaje_asistencia=porcentaje_asistencia,
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return {"success": True, "message": "Estadísticas registradas correctamente", "data": nuevo}
 
 
 @app.post(
