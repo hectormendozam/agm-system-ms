@@ -1,19 +1,21 @@
 import logging
 import jwt
 import sys
-import bcrypt
+from passlib.context import CryptContext
 from rabbitmq_manager import RabbitMQRpcServer
+import blacklist
 import models
 from database import SessionLocal
 from settings import ALGORITHM, SECRET_KEY
-
-from main import get_password_hash # Importar desde main para usar exactamente la misma lógica
 
 # Asegurar que los logs salgan a stdout
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger("[RabbitMQ-RPC ms-auth]")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
 
 def _rol_to_string(rol) -> str:
     if isinstance(rol, models.RolUsuario):
@@ -63,10 +65,13 @@ class AuthRpcHandlers:
     def validate_token(self, data):
         token = data.get("token")
         print(f"--> [RPC] Validando token: {token[:20]}...", flush=True)
+        if blacklist.contains(token):
+            print("--> [RPC] Token en blacklist (logout previo)", flush=True)
+            return {"valid": False, "error_message": "Token invalidado"}
         db = SessionLocal()
         try:
             usuario, error = self._get_user_from_token(token, db)
-            
+
             if usuario is None:
                 print(f"--> [RPC] Validacion fallida: {error}", flush=True)
                 return {
@@ -179,11 +184,6 @@ def serve():
     server.register_action('get_user_by_id', handlers.get_user_by_id)
     server.register_action('check_role', handlers.check_role)
     server.register_action('create_user', handlers.create_user)
-    print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
-    server.start()
-
-if __name__ == "__main__":
-    serve()
     print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
     server.start()
 

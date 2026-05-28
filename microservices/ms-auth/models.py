@@ -4,11 +4,11 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Enum
 import enum
 from database import Base
 
-# Definimos los roles exactos que exige el manual
+# Roles del sistema
 class RolUsuario(str, enum.Enum):
-    ADMIN = "ADMIN"
+    ADMIN   = "ADMIN"
     DOCENTE = "DOCENTE"
-    ALUMNO = "ALUMNO"
+    ALUMNO  = "ALUMNO"
 
 class Usuario(Base):
     __tablename__ = "usuarios"

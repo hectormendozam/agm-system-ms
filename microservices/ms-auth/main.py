@@ -5,10 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+import blacklist
 from database import Base, engine, get_db
 from notification_client import send_reset_password_email
 from settings import (
@@ -78,6 +79,12 @@ def get_usuario_actual(
         detail="No se pudieron validar las credenciales",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if blacklist.contains(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalidado. Inicia sesión nuevamente.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         usuario_id: str = payload.get("sub")
@@ -140,6 +147,23 @@ def login(
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+_http_bearer = HTTPBearer()
+
+@app.post("/auth/logout", response_model=schemas.MessageResponse)
+def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(_http_bearer),
+):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        exp = payload.get("exp")
+    except jwt.InvalidTokenError:
+        exp = None
+    blacklist.add(token, exp)
+    blacklist.purge_expired()
+    return schemas.MessageResponse(message="Sesión cerrada correctamente")
 
 
 @app.post(
