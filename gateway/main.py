@@ -58,7 +58,11 @@ async def proxy(request: Request, service: str, path: str):
     if not target_host:
         raise HTTPException(status_code=502, detail=f"Host faltante para: {service}")
 
-    url = f"http://{target_host}:{target_port}/{path}"
+    forwarded_path = path
+    if service == "auth":
+        forwarded_path = f"auth/{path}" if path else "auth"
+
+    url = f"http://{target_host}:{target_port}/{forwarded_path}"
     if request.query_params:
         url += f"?{request.query_params}"
 
