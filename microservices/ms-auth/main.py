@@ -51,16 +51,11 @@ app.add_middleware(
 )
 
 
-import hashlib
-
 def get_password_hash(password: str) -> str:
-    # Usar SHA-256 con un salt fijo para máxima predictibilidad entre microservicios
-    # manteniendo un nivel de seguridad adecuado para el proyecto.
-    salt = "agm_system_fixed_salt_2026"
-    return hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+    return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return get_password_hash(plain_password) == hashed_password
+    return pwd_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(data: dict) -> str:
