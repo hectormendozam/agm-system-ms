@@ -186,7 +186,7 @@ services:
       - MS_REPORTES_HOST=ms-reportes
       - MS_CALIFICACIONES_HOST=ms-calificaciones
     ports:
-      - "80:80"
+      - "80:8080"
     depends_on:
       - ms-auth
       - ms-periodos-materias
