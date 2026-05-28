@@ -3,11 +3,20 @@ main.py – Punto de entrada del MS-3: Docentes & Alumnos
 Arranca FastAPI (REST) y lanza el servidor RabbitMQ RPC en un hilo daemon separado.
 Patrón idéntico a ms-auth para coherencia arquitectónica.
 """
+import logging
 import threading
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+
+# Configuración de logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("ms-docentes")
 
 from database import engine, Base
 from src.controllers.docentes_controller import router as docentes_router

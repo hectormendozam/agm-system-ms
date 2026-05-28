@@ -12,6 +12,8 @@ import os
 import sys
 import threading
 import time
+import secrets
+import string
 
 import pika
 
@@ -26,11 +28,24 @@ QUEUE_NAME = "docentes_import_jobs_queue"
 
 # ── Helpers de notificación ───────────────────────────────────────────────────
 
+def _generar_password(length=8) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for i in range(length))
+
+
 def _create_user(rpc: RabbitMQRpcClient, email: str, rol: str) -> dict:
+    password = f"AGM-{_generar_password()}"
     try:
-        return rpc.call("rpc_auth_queue", "crear_usuario", {"email": email, "rol": rol})
+        res = rpc.call("rpc_auth_queue", "create_user", {
+            "email": email, 
+            "password": password, 
+            "rol": rol
+        })
+        if res.get("success"):
+            res["password"] = password  # Devolvemos la clave en claro para la notificación
+        return res
     except Exception as e:
-        logger.error(f"RPC crear_usuario falló para {email}: {e}")
+        logger.error(f"RPC create_user falló para {email}: {e}")
         return {"success": False, "error_message": str(e)}
 
 
@@ -88,17 +103,22 @@ def _procesar_docentes(data: dict):
                 continue
 
             res = _create_user(rpc, docente.email, "Docente")
-            if not res.get("success"):
-                logger.warning(f"No se creó usuario para {docente.email}: {res.get('error_message')}")
+            
+            msg = res.get("error_message") or res.get("message") or ""
+            ya_registrado = "ya esta registrado" in msg.lower() or "already registered" in msg.lower()
+
+            if not res.get("success") and not ya_registrado:
+                logger.warning(f"No se creó usuario para {docente.email}: {msg}")
                 errors += 1
                 continue
 
             ok += 1
             if not whitelist or docente.email.lower() in whitelist:
+                password = res.get("password") if res.get("success") else "Ya registrado"
                 _notify_docente(
                     pub,
                     {"id": docente.id, "nombre": docente.nombre, "email": docente.email},
-                    res["password"],
+                    password,
                     token,
                 )
             else:
@@ -130,7 +150,8 @@ def _procesar_alumnos(data: dict):
 
             res = _create_user(rpc, alumno.email, "Alumno")
             if not res.get("success"):
-                logger.warning(f"No se creó usuario para {alumno.email}: {res.get('error_message')}")
+                msg = res.get("error_message") or res.get("message") or "Error desconocido"
+                logger.warning(f"No se creó usuario para {alumno.email}: {msg}")
                 errors += 1
                 continue
 

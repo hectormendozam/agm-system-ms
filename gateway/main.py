@@ -5,23 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="AGM API Gateway")
 
-# Configuración de CORS
-# origins = [
-#     "https://agm-system-frontend-joselyn-agm.vercel.app",
-#     "https://agm-system-frontend-30ytwlq1y-joselyn-agm.vercel.app",
-#     "https://agm-system-frontend.vercel.app",
-#     "http://localhost:4200",
-# ]
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# CORS ABIERTO PARA DESARROLLO
+# Configuración de CORS ABIERTO PARA DESARROLLO
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,75 +16,80 @@ app.add_middleware(
 
 # Mapeo de prefijos a hosts
 SERVICES = {
-    "auth": {"host": os.getenv("MS_AUTH_HOST"), "port": 8000, "path_prefix": ""},
-    # ms-periodos-materias expone sus endpoints bajo /api/, indicar prefijo
-    "periodos": {"host": os.getenv("MS_PERIODOS_HOST"), "port": 8000, "path_prefix": "api"},
-    "docentes": {"host": os.getenv("MS_DOCENTES_HOST"), "port": 8003, "path_prefix": ""},
-    "calificaciones": {"host": os.getenv("MS_CALIFICACIONES_HOST"), "port": 8004, "path_prefix": ""},
-    "asistencias": {"host": os.getenv("MS_ASISTENCIAS_HOST"), "port": 8005, "path_prefix": ""},
-    "reportes": {"host": os.getenv("MS_REPORTES_HOST"), "port": 8007, "path_prefix": ""},
+    "auth": {"host": os.getenv("MS_AUTH_HOST", "ms-auth"), "port": 8000, "path_prefix": ""},
+    "periodos": {"host": os.getenv("MS_PERIODOS_HOST", "ms-periodos-materias"), "port": 8000, "path_prefix": "api"},
+    "materias": {"host": os.getenv("MS_PERIODOS_HOST", "ms-periodos-materias"), "port": 8000, "path_prefix": "api"},
+    "docentes": {"host": os.getenv("MS_DOCENTES_HOST", "ms-docentes"), "port": 8003, "path_prefix": ""},
+    "alumnos": {"host": os.getenv("MS_DOCENTES_HOST", "ms-docentes"), "port": 8003, "path_prefix": ""},
+    "calificaciones": {"host": os.getenv("MS_CALIFICACIONES_HOST", "ms-calificaciones"), "port": 8004, "path_prefix": ""},
+    "asistencias": {"host": os.getenv("MS_ASISTENCIAS_HOST", "ms-asistencias"), "port": 8005, "path_prefix": ""},
+    "reportes": {"host": os.getenv("MS_REPORTES_HOST", "ms-reportes"), "port": 8007, "path_prefix": ""},
 }
 
 client = httpx.AsyncClient()
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "Gateway FastAPI is RUNNING", "port": os.getenv("PORT", "80")}
+    return {"status": "ok", "message": "Gateway FastAPI is RUNNING", "port": os.getenv("PORT", "9000")}
 
 @app.api_route("/api/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
 async def proxy_api(request: Request, service: str, path: str):
-    return await proxy(request, service, path)
-
-@app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
-async def proxy(request: Request, service: str, path: str):
     if service not in SERVICES:
-        print(f"!! [Proxy Error] Servicio '{service}' no encontrado (Path: {path})")
         raise HTTPException(status_code=404, detail=f"Servicio '{service}' no encontrado")
 
     config = SERVICES[service]
     target_host = config["host"]
     target_port = config["port"]
+    prefix = config.get("path_prefix", "").strip("/")
 
-    if not target_host:
-        raise HTTPException(status_code=502, detail=f"Host no configurado para: {service}")
-
-    # Construir URL objetivo. Algunos microservicios exponen su API bajo un prefijo
-    # (p.ej. ms-periodos-materias usa '/api/'). Respetamos el prefijo definido.
-    prefix = config.get("path_prefix", "")
+    # Normalizar el path
+    clean_path = path.strip("/")
+    
+    # Construir URL interna
+    # Casi todos los microservicios esperan /nombre-servicio/endpoint
+    # Django (periodos/materias) espera /api/nombre-servicio/endpoint/
+    
+    segments = []
     if prefix:
-        url = f"http://{target_host}:{target_port}/{prefix}/{path}"
-    else:
-        url = f"http://{target_host}:{target_port}/{path}"
-    # Si por accidente el frontend concatena dos veces 'api' (p.ej. /api/periodos/api/materias),
-    # colapsamos '/api/api/' a '/api/' para evitar 400 por rutas inválidas.
-    url = url.replace('/api/api/', '/api/')
+        segments.append(prefix)
+    
+    segments.append(service)
+    
+    if clean_path:
+        segments.append(clean_path)
+    
+    internal_url = f"http://{target_host}:{target_port}/" + "/".join(segments)
+    
+    # Asegurar slash final para Django
+    if service in ["periodos", "materias"] and not internal_url.endswith("/"):
+        internal_url += "/"
+    
+    # Agregar query params si existen
     if request.query_params:
-        url += f"?{request.query_params}"
+        internal_url += f"?{request.query_params}"
 
-    print(f"--> [Proxy] {request.method} -> {url}")
+    print(f"--> [Proxy] {request.method} {request.url.path} -> {internal_url}")
 
     try:
         content = await request.body()
         original_headers = dict(request.headers)
-        # Filtrar y reenviar solo las cabeceras necesarias para evitar duplicados
-        allowed = ["authorization", "content-type", "accept", "user-agent", "origin", "referer", "cookie"]
-        headers = {}
-        for k, v in original_headers.items():
-            if k.lower() in allowed:
-                headers[k] = v
+        
+        # Cabeceras permitidas
+        allowed = ["authorization", "content-type", "accept", "user-agent", "origin", "referer"]
+        headers = {k: v for k, v in original_headers.items() if k.lower() in allowed}
 
         response = await client.request(
             method=request.method,
-            url=url,
+            url=internal_url,
             content=content,
             headers=headers,
-            timeout=15.0,
+            timeout=20.0,
             follow_redirects=True
         )
 
-        # Filtramos headers de CORS para evitar duplicados
+        # Filtramos headers de CORS para evitar duplicados si el MS ya los envía
         resp_headers = dict(response.headers)
-        for h in ["access-control-allow-origin", "access-control-allow-credentials", "access-control-allow-methods", "access-control-allow-headers"]:
+        for h in ["access-control-allow-origin", "access-control-allow-credentials", "access-control-allow-methods", "access-control-allow-headers", "content-length"]:
             resp_headers.pop(h, None)
 
         return Response(
@@ -111,3 +100,15 @@ async def proxy(request: Request, service: str, path: str):
     except Exception as e:
         print(f"!! [Proxy Error] {str(e)}")
         raise HTTPException(status_code=502, detail=f"Error conectando a {service}: {str(e)}")
+
+# Catch-all para rutas que no empiecen con /api/
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
+async def catch_all(request: Request, path: str):
+    # Si la ruta es directamente un servicio (ej: /auth/login), redirigir a /api/auth/login
+    parts = path.strip("/").split("/")
+    if parts and parts[0] in SERVICES:
+        service = parts[0]
+        remaining = "/".join(parts[1:])
+        return await proxy_api(request, service, remaining)
+    
+    raise HTTPException(status_code=404, detail="Ruta no encontrada. Use /api/{servicio}/...")

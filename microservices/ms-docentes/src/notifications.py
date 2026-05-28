@@ -10,17 +10,17 @@ logger = logging.getLogger("[ms-docentes notifications]")
 rabbitmq = RabbitMQManager()
 rpc_client = RabbitMQRpcClient()
 
-def create_user_auth_rpc(email: str, rol: str) -> dict:
+def create_user_auth_rpc(email: str, rol: str, password: str) -> dict:
     """Llama al MS-Auth vía RPC para crear un usuario"""
     try:
         response = rpc_client.call(
             queue_name='rpc_auth_queue',
-            action='crear_usuario',
-            data={"email": email, "rol": rol}
+            action='create_user',
+            data={"email": email, "rol": rol, "password": password}
         )
         return response
     except Exception as e:
-        logger.error(f"Error llamando RPC crear_usuario: {e}")
+        logger.error(f"Error llamando RPC create_user: {e}")
         return {"success": False, "error_message": str(e)}
 
 def send_baja_notif(alumno_data: dict, docente_data: dict, auth_token: str) -> bool:

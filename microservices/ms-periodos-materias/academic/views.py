@@ -21,11 +21,11 @@ def _user_role(user):
 class IsDocente(BasePermission):
     """Permite acceso solo a usuarios con rol Docente o Administrador."""
     def has_permission(self, request, view):
-        return _user_role(request.user) in {"Docente", "Administrador"}
+        return _user_role(request.user) in {"Docente", "Administrador", "ADMIN"}
 
 class IsAdminOrDocente(BasePermission):
     def has_permission(self, request, view):
-        return _user_role(request.user) in {"Administrador", "Docente"}
+        return _user_role(request.user) in {"Administrador", "Docente", "ADMIN"}
 
 
 class PeriodoViewSet(viewsets.ModelViewSet):
@@ -113,7 +113,7 @@ class MateriaViewSet(viewsets.ModelViewSet):
         if docente_id:
             queryset = queryset.filter(docente_id=docente_id)
         if search:
-            queryset = queryset.filter(nombre__icontains=search)
+            queryset = queryset.filter(Q(nombre__icontains=search) | Q(nrc__icontains=search))
         if activo is not None:
             queryset = queryset.filter(activo=activo.lower() in {"1", "true", "yes"})
         return queryset
@@ -237,3 +237,4 @@ class MateriaViewSet(viewsets.ModelViewSet):
             data.append(item)
 
         return self._success(data, "Materias con nombre de periodo obtenidas correctamente.")
+

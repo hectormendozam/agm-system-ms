@@ -109,8 +109,8 @@ services:
       - DB_URL=postgresql://postgres:root@postgres-db:5432/agm_docentes_db
       - REST_PORT=8003
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-      - NOTIFY_DOCENTE_WHITELIST=luis.mendezsanchez@correo.buap.mx
-      - NOTIFY_ALUMNO_WHITELIST=aaron.torresc@alumno.buap.mx,hector.mendozam@alumno.buap.mx,alfredo.escudero@alumno.buap.mx,johan.martinezga@alumno.buap.mx,joselyn.ramirezl@alumno.buap.mx,alejandro.amadorla@alumno.buap.mx
+      - NOTIFY_DOCENTE_WHITELIST=
+      - NOTIFY_ALUMNO_WHITELIST=
     depends_on:
       - postgres-db
       - rabbitmq

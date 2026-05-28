@@ -139,16 +139,8 @@ def importar_alumnos_desde_pdf(contenido: bytes, expected_nrc: str, db: Session)
                     
                     db.flush()
 
-                    # Registrar en Auth
-                    auth_res = rpc_client.call('rpc_auth_queue', 'create_user', {
-                        "email": email,
-                        "password": clave,
-                        "rol": "ALUMNO"
-                    })
-
                     alumnos_procesados.append({
                         "alumno": alumno,
-                        "clave": clave if (es_nuevo or (auth_res and auth_res.get("success"))) else "Ya registrado",
                         "es_nuevo": es_nuevo
                     })
 

@@ -55,24 +55,10 @@ async def importar_alumnos(
     contenido = await archivo.read()
     try:
         alumnos_procesados = alumnos_service.importar_alumnos_desde_pdf(contenido, materiaId, db)
-
-        # Notificar Bienvenida
-        if alumnos_procesados:
-            token = authorization.replace("Bearer ", "") if authorization else "no-token"
-            materia = db.query(models.MateriaDocente).filter(models.MateriaDocente.nrc == materiaId).first()
-            materia_nombre = materia.nombre_materia if materia else f"NRC {materiaId}"
-
-            from src.notifications import send_bienvenida_notif
-            for item in alumnos_procesados:
-                alu = item["alumno"]
-                clave = item["clave"]
-                alu_dict = {"id": alu.id, "nombre": alu.nombre, "email": alu.email, "matricula": alu.matricula}
-                send_bienvenida_notif(alu_dict, materia_nombre, token, clave_unica=clave)
-
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Error al procesar el PDF: {str(exc)}")
 
-    if alumnos_nuevos:
+    if alumnos_procesados:
         import os
         from src.notifications import rabbitmq as _rmq
         token = authorization.replace("Bearer ", "") if authorization else "no-token"
@@ -84,7 +70,7 @@ async def importar_alumnos(
             "docentes_import_jobs_queue",
             {
                 "job_type": "crear_usuarios_alumnos",
-                "alumno_ids": [a.id for a in alumnos_nuevos],
+                "alumno_ids": [a["alumno"].id for a in alumnos_procesados],
                 "materia_nombre": materia_nombre,
                 "token": token,
                 "whitelist": whitelist,
@@ -132,7 +118,7 @@ async def importar_alumnos_auto(
             "docentes_import_jobs_queue",
             {
                 "job_type": "crear_usuarios_alumnos",
-                "alumno_ids": [a.id for a in alumnos_nuevos],
+                "alumno_ids": [a["alumno"].id for a in alumnos_nuevos],
                 "materia_nombre": materia_nombre,
                 "token": token,
                 "whitelist": whitelist,

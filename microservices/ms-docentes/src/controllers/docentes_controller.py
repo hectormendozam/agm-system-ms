@@ -2,7 +2,7 @@
 controllers/docentes_controller.py
 Router FastAPI para el recurso /docentes.
 """
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Path
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Path, Header
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -50,32 +50,46 @@ def _resolver_archivo(archivo: UploadFile | None, file: UploadFile | None) -> Up
 @router.post(
     "/importar",
     response_model=ImportacionResponse,
-    summary="Importar programacion academica desde PDF",
+    summary="Importar docentes desde PDF (Auto-detección)",
 )
 async def importar_docentes(
-    archivo: UploadFile = File(None, description="PDF de programacion academica"),
+    archivo: UploadFile = File(None, description="PDF de programacion academica o directorio"),
     file: UploadFile = File(None, description="Alias usado por algunos frontends"),
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
 ):
     archivo = _resolver_archivo(archivo, file)
     contenido = await archivo.read()
     try:
+        # 1. Intentar como programación académica (formato Materias/NRC)
         total = docentes_service.importar_docentes_desde_pdf(contenido, db)
+        
+        # 2. Si no se importó nada, intentar como directorio de Personal Docente
+        if total == 0:
+            total = docentes_service.importar_directorio_docentes_pdf(contenido, db)
+            mensaje = "Importacion del directorio docente completada"
+        else:
+            mensaje = "Importacion de docentes (programacion academica) completada"
+            
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=422, detail=f"Error al procesar el PDF: {exc}")
 
     docentes = docentes_service.buscar_docentes(db)
     import os
+    token = authorization.replace("Bearer ", "") if authorization else "no-token"
     _rmq.publish_to_queue(
         "docentes_import_jobs_queue",
         {
             "job_type": "crear_usuarios_docentes",
             "docente_ids": [d.id for d in docentes],
+            "token": token,
             "whitelist": [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()],
         },
     )
     return ImportacionResponse(
-        mensaje="Importacion de docentes completada",
+        mensaje=mensaje,
         registros_importados=total,
     )
 
@@ -89,6 +103,7 @@ async def importar_directorio_docentes(
     archivo: UploadFile = File(None, description="PDF de directorio de personal docente"),
     file: UploadFile = File(None, description="Alias usado por algunos frontends"),
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
 ):
     archivo = _resolver_archivo(archivo, file)
     contenido = await archivo.read()
@@ -99,14 +114,17 @@ async def importar_directorio_docentes(
 
     docentes = docentes_service.buscar_docentes(db)
     import os
+    token = authorization.replace("Bearer ", "") if authorization else "no-token"
     _rmq.publish_to_queue(
         "docentes_import_jobs_queue",
         {
             "job_type": "crear_usuarios_docentes",
             "docente_ids": [d.id for d in docentes],
+            "token": token,
             "whitelist": [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()],
         },
     )
+
     return ImportacionResponse(
         mensaje="Importacion del directorio docente completada",
         registros_importados=total,

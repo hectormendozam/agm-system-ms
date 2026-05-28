@@ -66,7 +66,7 @@ def _es_linea_docente(texto: str) -> bool:
         return False
     if "CON NRC" in texto.upper() or "MATERIA CRUZADA" in texto.upper():
         return False
-    return bool(re.fullmatch(r"[A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ\s\-\.]+", texto))
+    return bool(re.fullmatch(r"[A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ\s\-\.,]+", texto))
 
 
 def _extraer_docente_y_salon(resto: str, extras: List[str]) -> tuple[str, str]:
@@ -372,7 +372,20 @@ def dar_de_baja_docente(docente_id: int, db: Session) -> models.Docente:
     return docente
 
 
-# ── Importación del Directorio "Personal Docente" ─────────────────────────────
+import unicodedata
+
+def _normalizar_nombre(nombre: str) -> str:
+    """Normaliza un nombre: quita acentos, convierte a minúsculas y limpia espacios/puntuación."""
+    if not nombre:
+        return ""
+    # Quitar acentos
+    s = ''.join(c for c in unicodedata.normalize('NFD', nombre)
+               if unicodedata.category(c) != 'Mn')
+    # Quitar guiones y puntuación, pasar a minúsculas
+    s = re.sub(r'[^a-zA-Z\s]', ' ', s).lower()
+    # Limpiar espacios
+    return ' '.join(s.split())
+
 def _parsear_pagina_directorio(pagina) -> List[dict]:
     """
     Extrae texto de una página del PDF "Personal Docente" y lo parsea línea por línea.
@@ -383,25 +396,31 @@ def _parsear_pagina_directorio(pagina) -> List[dict]:
         return registros
     
     lineas = texto.split('\n')
-    started = False
+    # El encabezado puede no estar en todas las páginas, así que somos más flexibles
     
     for line in lineas:
         line = line.strip()
         if not line:
             continue
-        # Buscar el encabezado para empezar a parsear (o seguir si ya empezó)
-        if "Nombre Correo" in line:
-            started = True
-            continue
-        if not started:
+            
+        # Omitir líneas que son claramente encabezados o migas de pan
+        if any(h in line for h in ["Nombre Correo", "Ubicación:", "Extensión:", "Página", "Directorio", "Inicio >"]):
             continue
         
-        # Parsear con regex
-        match = re.search(r'^(.*?)\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*(.*)$', line)
+        # Parsear con regex: Nombre + Email + Resto (Ubicación/Extensión)
+        # El nombre suele ser varias palabras, luego un espacio y un email.
+        match = re.search(r'^(.+?)\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*(.*)$', line)
         if match:
             nombre = match.group(1).strip()
             email = match.group(2).strip()
             rest = match.group(3).strip()
+            
+            # Limpiar el nombre de posibles ruidos al inicio (como viñetas ■)
+            nombre = re.sub(r'^[■\s>]+', '', nombre).strip()
+            
+            if len(nombre) < 3:
+                continue
+
             ubicacion = rest.split()[0] if rest else ""
             
             registros.append({
@@ -427,32 +446,38 @@ def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
         for pagina in pdf.pages:
             filas.extend(_parsear_pagina_directorio(pagina))
 
+    # Pre-cargar todos los docentes para comparación normalizada
+    todos_docentes = db.query(models.Docente).all()
+    docentes_map = {_normalizar_nombre(d.nombre): d for d in todos_docentes}
+
     for fila in filas:
         nombre_docente = fila["nombre"]
         if not nombre_docente:
             continue
 
-        # 1. Buscar o crear el docente
-        docente = (
-            db.query(models.Docente)
-            .filter(models.Docente.nombre == nombre_docente)
-            .first()
-        )
+        email = fila["email"]
+        nombre_norm = _normalizar_nombre(nombre_docente)
+
+        # 1. Buscar el docente usando el nombre normalizado
+        docente = docentes_map.get(nombre_norm)
+        
         if not docente:
             docente = models.Docente(
                 nombre=nombre_docente,
-                email=fila["email"],
+                email=email,
                 departamento=fila["ubicacion"],
                 activo=True,
             )
             db.add(docente)
+            db.flush()
+            # Actualizar el mapa por si el mismo docente aparece de nuevo
+            docentes_map[nombre_norm] = docente
             registros_importados += 1
         else:
             docente.activo = True
             # Actualiza datos si ya existía y si trajo nueva información
-            # Se prioriza la nueva importación
-            if fila["email"]:
-                docente.email = fila["email"]
+            if email:
+                docente.email = email
             if fila["ubicacion"]:
                 docente.departamento = fila["ubicacion"]
             registros_importados += 1

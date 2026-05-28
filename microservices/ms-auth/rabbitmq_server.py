@@ -2,18 +2,19 @@ import logging
 import jwt
 import sys
 import bcrypt
+from passlib.context import CryptContext
 from rabbitmq_manager import RabbitMQRpcServer
 import models
 from database import SessionLocal
 from settings import ALGORITHM, SECRET_KEY
 
-from main import get_password_hash # Importar desde main para usar exactamente la misma lógica
+# Mismo contexto que en main.py para consistencia
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
 
 # Asegurar que los logs salgan a stdout
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-logger = logging.getLogger("[RabbitMQ-RPC ms-auth]")
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def _rol_to_string(rol) -> str:
     if isinstance(rol, models.RolUsuario):
@@ -179,11 +180,6 @@ def serve():
     server.register_action('get_user_by_id', handlers.get_user_by_id)
     server.register_action('check_role', handlers.check_role)
     server.register_action('create_user', handlers.create_user)
-    print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
-    server.start()
-
-if __name__ == "__main__":
-    serve()
     print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
     server.start()
 

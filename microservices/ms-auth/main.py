@@ -1,7 +1,16 @@
+import logging
 import hashlib
 import secrets
 import threading
 from datetime import datetime, timedelta, timezone
+
+# Configuración de logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("ms-auth")
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, status
