@@ -255,16 +255,16 @@ def _finalizar_registro(registro: dict) -> List[dict]:
     ]
 
 
-def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
+def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> List[models.Docente]:
     """
     Procesa el PDF de programación académica y persiste los datos en PostgreSQL.
     Estrategia: upsert por nombre de docente + NRC para evitar duplicados en
     reimportaciones.
 
     Returns:
-        Número de registros de materias importados.
+        Lista de docentes procesados.
     """
-    registros_importados = 0
+    docentes_procesados = []
 
     with pdfplumber.open(BytesIO(contenido)) as pdf:
         filas = []
@@ -312,19 +312,9 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
             docente = models.Docente(nombre=nombre_docente)
             db.add(docente)
             db.flush()   # obtenemos el id sin hacer commit todavía
-            
-            # 1.1 Registrar en Auth con email genérico o temporal si no lo tiene aún
-            username_part = re.sub(r'[^a-z0-9]', '', nombre_docente.lower())[:20]
-            temp_email = f"{username_part}@docente.buap.mx"
-            temp_clave = f"AGM-{_generar_clave_unica()}"
-            
-            rpc_client.call('rpc_auth_queue', 'create_user', {
-                "email": temp_email,
-                "password": temp_clave,
-                "rol": "Docente"
-            })
-            
             docentes_map[nombre_norm] = docente
+        if docente not in docentes_procesados:
+            docentes_procesados.append(docente)
 
         # 2. Upsert de la materia del docente
         materia = (
@@ -345,14 +335,15 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
                 horario=" ; ".join(fila["horarios"]),
             )
             db.add(materia)
-            registros_importados += 1
         else:
             # Actualiza datos si ya existía
             materia.nombre_materia = fila["nombre_materia"]
             materia.horario = " ; ".join(fila["horarios"])
 
     db.commit()
-    return registros_importados
+    for d in docentes_procesados:
+        db.refresh(d)
+    return docentes_procesados
 
 
 def listar_docentes(db: Session) -> List[models.Docente]:
@@ -412,14 +403,6 @@ def _parsear_pagina_directorio(pagina) -> List[dict]:
             
     return registros
 
-from rabbitmq_manager import RabbitMQRpcClient
-import secrets
-import string
-
-def _generar_clave_unica(length=8) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for i in range(length))
-
 import unicodedata
 
 def _normalizar_nombre(nombre: str) -> str:
@@ -434,13 +417,15 @@ def _normalizar_nombre(nombre: str) -> str:
     # Limpiar espacios
     return ' '.join(s.split())
 
-def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
+def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> List[models.Docente]:
     """
     Procesa el PDF de "Personal Docente" para actualizar/crear la información de los docentes
-    (email y departamento/ubicación) y los registra en MS-Auth.
+    (email y departamento/ubicación).
+    
+    Returns:
+        Lista de docentes procesados.
     """
-    registros_importados = 0
-    rpc_client = RabbitMQRpcClient()
+    docentes_procesados = []
 
     with pdfplumber.open(BytesIO(contenido)) as pdf:
         filas = []
@@ -457,7 +442,6 @@ def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
             continue
 
         email = fila["email"]
-        clave = _generar_clave_unica()
         nombre_norm = _normalizar_nombre(nombre_docente)
 
         # 1. Buscar el docente usando el nombre normalizado
@@ -478,16 +462,10 @@ def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
                 docente.email = email
             if fila["ubicacion"]:
                 docente.departamento = fila["ubicacion"]
-        
-        # 2. Registrar en Auth
-        if email:
-            rpc_client.call('rpc_auth_queue', 'create_user', {
-                "email": email,
-                "password": clave,
-                "rol": "Docente"
-            })
 
-        registros_importados += 1
+        docentes_procesados.append(docente)
 
     db.commit()
-    return registros_importados
+    for d in docentes_procesados:
+        db.refresh(d)
+    return docentes_procesados

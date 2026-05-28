@@ -11,6 +11,7 @@ class EventConsumer {
             'auth.reset_password',
             'periodos.materia_cerrada',
             'periodos.bienvenida',
+            'docentes.bienvenida',
             'docentes.baja',
             'asistencias.retardo'
         ];
@@ -67,6 +68,9 @@ class EventConsumer {
                     switch (routingKey) {
                         case 'periodos.bienvenida':
                             await notificationController.handleBienvenida(content);
+                            break;
+                        case 'docentes.bienvenida':
+                            await notificationController.handleBienvenidaDocente(content);
                             break;
                         case 'docentes.baja':
                             await notificationController.handleBaja(content);

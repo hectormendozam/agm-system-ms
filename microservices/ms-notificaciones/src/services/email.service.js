@@ -1,63 +1,64 @@
-const apiInstance = require('../config/mailer');
+const { brevoApi, smtpTransporter } = require('../config/mailer');
 const db = require('../config/database');
 
 class EmailService {
     /**
-     * Envía un correo usando la API de Brevo (SDK v5.x)
-     * @param {Object} options { to, subject, html, bccList }
-     * @param {string} notificationType 
-     * @param {string} referenceId 
+     * Envía un correo eligiendo automáticamente entre Brevo API o SMTP
      */
     async sendMail(options, notificationType, referenceId) {
         try {
-            // Parsear MAIL_FROM para extraer Nombre y Email (estrictamente desde env)
-            const mailFrom = process.env.MAIL_FROM || "";
-            let sender = { email: mailFrom };
+            const mailFrom = process.env.MAIL_FROM || "AGM System <noreply@agm.com>";
+            let result;
 
-            const match = mailFrom.match(/(.*)<(.*)>/);
-            if (match) {
-                sender.name = match[1].trim();
-                sender.email = match[2].trim();
+            // PRIORIDAD 1: Brevo API (Producción)
+            if (brevoApi) {
+                console.log(`[EmailService] Enviando ${notificationType} vía Brevo API...`);
+                
+                let sender = { email: mailFrom };
+                const match = mailFrom.match(/(.*)<(.*)>/);
+                if (match) {
+                    sender.name = match[1].trim();
+                    sender.email = match[2].trim();
+                }
+
+                const emailPayload = {
+                    subject: options.subject,
+                    htmlContent: options.html,
+                    sender: sender,
+                    to: (Array.isArray(options.to) ? options.to : [options.to]).map(email => ({ email }))
+                };
+
+                if (options.bccList) {
+                    emailPayload.bcc = options.bccList.map(email => ({ email }));
+                }
+
+                const response = await brevoApi.transactionalEmails.sendTransacEmail(emailPayload);
+                result = { success: true, messageId: response.data ? response.data.messageId : 'API-OK' };
+            } 
+            // PRIORIDAD 2: SMTP (Local / smtp4dev)
+            else if (smtpTransporter) {
+                console.log(`[EmailService] Enviando ${notificationType} vía SMTP (${options.to})...`);
+                const mailOptions = {
+                    from: mailFrom,
+                    to: options.to,
+                    subject: options.subject,
+                    html: options.html,
+                    bcc: options.bccList
+                };
+
+                const info = await smtpTransporter.sendMail(mailOptions);
+                result = { success: true, messageId: info.messageId };
+            } 
+            else {
+                throw new Error("No hay configurado ningún método de envío de correos (Brevo API o SMTP)");
             }
 
-            // Construir el objeto de la petición según SDK v5
-            const emailPayload = {
-                subject: options.subject,
-                htmlContent: options.html,
-                sender: sender
-            };
-
-            // Configurar destinatarios (solo si hay)
-            if (options.to) {
-                const recipients = Array.isArray(options.to) ? options.to : [options.to];
-                emailPayload.to = recipients.map(email => ({ email }));
-            }
-
-            // Configurar copia oculta (solo si hay)
-            if (options.bccList && options.bccList.length > 0) {
-                emailPayload.bcc = options.bccList.map(email => ({ email }));
-            }
-
-            console.log(`[EmailService] Despachando ${notificationType} vía Brevo API (v5)...`);
-            
-            // Llamada a la API usando el cliente instanciado
-            const response = await apiInstance.transactionalEmails.sendTransacEmail(emailPayload);
-            
-            // En v5 la respuesta viene en response.data
-            console.log(`[EmailService] ÉXITO: Correo enviado. ID: ${response.data ? response.data.messageId : 'N/A'}`);
-            
+            console.log(`[EmailService] ÉXITO: Correo despachado. ID: ${result.messageId}`);
             await this.logHistory(notificationType, options.to || "BCC Group", referenceId, 'enviado');
-            
-            return { success: true, messageId: response.data ? response.data.messageId : null };
+            return result;
 
         } catch (error) {
-            console.error(`[EmailService] Fallo en API Brevo para ${notificationType}:`, error.message);
-            
-            // Si el error viene de la API, imprimir detalles
-            if (error.body) {
-                console.error("[EmailService] Detalle del error API:", JSON.stringify(error.body));
-            }
-            
+            console.error(`[EmailService] Fallo enviando correo ${notificationType}:`, error.message);
             await this.logHistory(notificationType, options.to || "BCC Group", referenceId, 'fallido');
             throw error;
         }

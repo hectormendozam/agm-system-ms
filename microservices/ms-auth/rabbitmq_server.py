@@ -1,6 +1,9 @@
 import logging
 import jwt
 import sys
+import secrets
+import string
+from passlib.context import CryptContext
 from rabbitmq_manager import RabbitMQRpcServer
 import models
 from database import SessionLocal
@@ -9,6 +12,8 @@ from settings import ALGORITHM, SECRET_KEY
 # Asegurar que los logs salgan a stdout
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger("[RabbitMQ-RPC ms-auth]")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def _rol_to_string(rol) -> str:
     if isinstance(rol, models.RolUsuario):

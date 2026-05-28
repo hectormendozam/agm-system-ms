@@ -100,20 +100,22 @@ async def importar_alumnos_auto(
     if not materiaId:
         raise HTTPException(status_code=422, detail="No se pudo detectar el NRC dentro del PDF")
 
-    alumnos_nuevos = alumnos_service.importar_alumnos_desde_pdf(contenido, materiaId, db)
-    if alumnos_nuevos:
+    alumnos_procesados = alumnos_service.importar_alumnos_desde_pdf(contenido, materiaId, db)
+    if alumnos_procesados:
         token = authorization.replace("Bearer ", "") if authorization else "no-token"
         materia = db.query(models.MateriaDocente).filter(models.MateriaDocente.nrc == materiaId).first()
         materia_nombre = materia.nombre_materia if materia else f"NRC {materiaId}"
 
         from src.notifications import send_bienvenida_notif
-        for alu in alumnos_nuevos:
+        for item in alumnos_procesados:
+            alu = item["alumno"]
+            clave = item["clave"]
             alu_dict = {"id": alu.id, "nombre": alu.nombre, "email": alu.email, "matricula": alu.matricula}
-            send_bienvenida_notif(alu_dict, materia_nombre, token)
+            send_bienvenida_notif(alu_dict, materia_nombre, token, clave_unica=clave)
 
     return ImportacionResponse(
         mensaje=f"Importacion de alumnos para NRC {materiaId} completada",
-        registros_importados=len(alumnos_nuevos),
+        registros_importados=len(alumnos_procesados),
     )
 
 
