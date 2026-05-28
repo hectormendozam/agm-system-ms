@@ -6,9 +6,9 @@ from database import Base
 
 # Definimos los roles exactos que exige el manual
 class RolUsuario(str, enum.Enum):
-    ADMIN = "Administrador"
-    DOCENTE = "Docente"
-    ALUMNO = "Alumno"
+    ADMIN = "ADMIN"
+    DOCENTE = "DOCENTE"
+    ALUMNO = "ALUMNO"
 
 class Usuario(Base):
     __tablename__ = "usuarios"

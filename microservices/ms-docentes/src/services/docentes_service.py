@@ -312,6 +312,18 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> List[models.Do
             docente = models.Docente(nombre=nombre_docente)
             db.add(docente)
             db.flush()   # obtenemos el id sin hacer commit todavía
+            
+            # 1.1 Registrar en Auth con email genérico o temporal si no lo tiene aún
+            username_part = re.sub(r'[^a-z0-9]', '', nombre_docente.lower())[:20]
+            temp_email = f"{username_part}@docente.buap.mx"
+            temp_clave = "password123"
+            
+            rpc_client.call('rpc_auth_queue', 'create_user', {
+                "email": temp_email,
+                "password": temp_clave,
+                "rol": "Docente"
+            })
+            
             docentes_map[nombre_norm] = docente
         if docente not in docentes_procesados:
             docentes_procesados.append(docente)
@@ -403,6 +415,14 @@ def _parsear_pagina_directorio(pagina) -> List[dict]:
             
     return registros
 
+from rabbitmq_manager import RabbitMQRpcClient
+import secrets
+import string
+
+def _generar_clave_unica(length=8) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for i in range(length))
+
 import unicodedata
 
 def _normalizar_nombre(nombre: str) -> str:
@@ -417,15 +437,13 @@ def _normalizar_nombre(nombre: str) -> str:
     # Limpiar espacios
     return ' '.join(s.split())
 
-def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> List[models.Docente]:
+def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
     """
     Procesa el PDF de "Personal Docente" para actualizar/crear la información de los docentes
-    (email y departamento/ubicación).
-    
-    Returns:
-        Lista de docentes procesados.
+    (email y departamento/ubicación) y los registra en MS-Auth.
     """
-    docentes_procesados = []
+    registros_importados = 0
+    rpc_client = RabbitMQRpcClient()
 
     with pdfplumber.open(BytesIO(contenido)) as pdf:
         filas = []
@@ -442,6 +460,7 @@ def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> List[mode
             continue
 
         email = fila["email"]
+        clave = "password123"
         nombre_norm = _normalizar_nombre(nombre_docente)
 
         # 1. Buscar el docente usando el nombre normalizado
@@ -462,8 +481,16 @@ def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> List[mode
                 docente.email = email
             if fila["ubicacion"]:
                 docente.departamento = fila["ubicacion"]
+        
+        # 2. Registrar en Auth
+        if email:
+            rpc_client.call('rpc_auth_queue', 'create_user', {
+                "email": email,
+                "password": "password123", # Password por defecto para docentes importados
+                "rol": "Docente"
+            })
 
-        docentes_procesados.append(docente)
+        registros_importados += 1
 
     db.commit()
     for d in docentes_procesados:

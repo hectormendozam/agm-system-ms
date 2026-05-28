@@ -143,6 +143,7 @@ services:
       - ./microservices/ms-periodos-materias/.env
     environment:
       - SECRET_KEY=clave_super_secreta_desarrollo_agm
+      - ALLOWED_HOSTS=localhost,127.0.0.1,ms-periodos-materias
       - DB_ENGINE=django.db.backends.postgresql
       - DB_HOST=postgres-db
       - DB_PORT=5432

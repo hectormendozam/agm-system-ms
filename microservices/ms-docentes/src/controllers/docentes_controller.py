@@ -8,6 +8,7 @@ from typing import Optional
 
 from database import get_db
 from schemas import ImportacionResponse
+import models
 from src.services import docentes_service
 from auth_middleware import get_current_user_rpc
 
@@ -148,3 +149,28 @@ def listar_docentes(
 ):
     docentes = docentes_service.buscar_docentes(db, search)
     return {"count": len(docentes), "next": None, "previous": None, "results": [_docente_dict(d) for d in docentes]}
+
+
+@router.get(
+    "/{docente_id}/materias/",
+    summary="Listar materias de un docente",
+)
+def listar_materias_docente(docente_id: int, db: Session = Depends(get_db)):
+    docente = db.query(models.Docente).filter(models.Docente.id == docente_id).first()
+    if docente is None:
+        raise HTTPException(status_code=404, detail=f"Docente {docente_id} no encontrado")
+
+    materias = [
+        {
+            "id": materia.id,
+            "nrc": materia.nrc,
+            "nombre": materia.nombre_materia,
+            "nombre_materia": materia.nombre_materia,
+            "seccion": materia.seccion,
+            "clave": materia.clave,
+            "horario": materia.horario,
+        }
+        for materia in docente.materias
+    ]
+
+    return {"data": materias}

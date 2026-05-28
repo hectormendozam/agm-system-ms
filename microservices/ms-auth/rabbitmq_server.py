@@ -1,13 +1,13 @@
 import logging
 import jwt
 import sys
-import secrets
-import string
-from passlib.context import CryptContext
+import bcrypt
 from rabbitmq_manager import RabbitMQRpcServer
 import models
 from database import SessionLocal
 from settings import ALGORITHM, SECRET_KEY
+
+from main import get_password_hash # Importar desde main para usar exactamente la misma lógica
 
 # Asegurar que los logs salgan a stdout
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -18,13 +18,20 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def _rol_to_string(rol) -> str:
     if isinstance(rol, models.RolUsuario):
         return rol.value
-    return str(rol)
+    return str(rol).upper() # Asegurar uppercase
 
 def _normalize_role(rol: str) -> str:
-    for rol_usuario in models.RolUsuario:
-        if rol in {rol_usuario.name, rol_usuario.value}:
-            return rol_usuario.value
-    return rol
+    # Mapeo flexible para soportar nombres legibles o claves de enum
+    mapping = {
+        "administrador": "ADMIN",
+        "admin": "ADMIN",
+        "docente": "DOCENTE",
+        "profesor": "DOCENTE",
+        "alumno": "ALUMNO",
+        "estudiante": "ALUMNO"
+    }
+    normalized = mapping.get(rol.lower(), rol.upper())
+    return normalized
 
 def _to_user_dict(usuario: models.Usuario):
     return {
@@ -131,13 +138,10 @@ class AuthRpcHandlers:
     def create_user(self, data):
         email = data.get("email")
         password = data.get("password")
-        rol = data.get("rol", "Alumno")
+        rol = data.get("rol", "ALUMNO")
         
         db = SessionLocal()
         try:
-            # Importar localmente para evitar circulares si las hubiera
-            import main 
-            
             db_user = db.query(models.Usuario).filter(models.Usuario.email == email).first()
             if db_user:
                 return {
@@ -147,7 +151,7 @@ class AuthRpcHandlers:
 
             nuevo_usuario = models.Usuario(
                 email=email,
-                password_hash=main.get_password_hash(password),
+                password_hash=get_password_hash(password),
                 rol=_normalize_role(rol),
             )
 
@@ -175,6 +179,11 @@ def serve():
     server.register_action('get_user_by_id', handlers.get_user_by_id)
     server.register_action('check_role', handlers.check_role)
     server.register_action('create_user', handlers.create_user)
+    print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
+    server.start()
+
+if __name__ == "__main__":
+    serve()
     print("--> [RPC] Servidor Auth iniciado en rpc_auth_queue", flush=True)
     server.start()
 

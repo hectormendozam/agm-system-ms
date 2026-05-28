@@ -279,20 +279,50 @@ def asistencias_hoy(
     ).order_by(models.SesionAsistencia.fecha_creacion.desc()).first()
 
     if not sesion_reciente:
-        return {"success": True, "data": [], "message": "No hay sesiones registradas hoy."}
+        return {"success": True, "data": {"registros": []}, "message": "No hay sesiones registradas hoy."}
 
     registros = db.query(models.RegistroAsistencia).filter(
         models.RegistroAsistencia.sesion_id == sesion_reciente.id
     ).all()
+
+    # Enriquecer los datos llamando a ms-docentes por RabbitMQ
+    from src.rabbitmq_manager import RabbitMQRpcClient
+    rpc_client = RabbitMQRpcClient()
+    resultados = []
+
+    for r in registros:
+        nombre = f"Alumno {r.alumno_id}"
+        matricula = "-"
+        try:
+            # Consultamos el nombre y matrícula reales
+            resp = rpc_client.call('rpc_docentes_queue', 'get_alumno_by_id', {"id": r.alumno_id})
+            if resp and resp.get("success"):
+                nombre = resp["data"].get("nombre", nombre)
+                # Si falla, veremos este texto en lugar de un guion mudo
+                matricula = resp["data"].get("matricula", "No recibida")
+        except Exception:
+            pass
+
+        # Construimos el JSON exacto asegurando todas las posibles llaves de Angular
+        resultados.append({
+            "alumno_id": r.alumno_id,
+            "alumno_nombre": nombre,
+            "nombre": nombre,
+            "alumno_matricula": matricula,
+            "matricula": matricula,
+            "timestamp": r.hora_registro.isoformat() if r.hora_registro else "",
+            "hora": r.hora_registro.isoformat() if r.hora_registro else "",
+            "estado": r.estado
+        })
 
     return {
         "success": True,
         "data": {
             "sesion_id": sesion_reciente.id,
             "fecha": sesion_reciente.fecha_creacion,
-            "registros": registros
+            "registros": resultados
         },
-        "message": "Asistencias de la sesión más reciente obtenidas."
+        "message": "Asistencias de la sesión reciente obtenidas."
     }
 
 

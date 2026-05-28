@@ -13,10 +13,4 @@ localResources:
     - ../proto/auth.proto
     - ../proto/calificaciones.proto
   docs:
-<<<<<<< HEAD
-    - ..\microservices\README.md
-    - ..\README.md
-DME.md
-=======
     - ..\infrastructure\README.md
->>>>>>> 960c571309e7bb3139f1eae1855d7ab9a5eaf416

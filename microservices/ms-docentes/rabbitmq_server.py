@@ -6,6 +6,10 @@ import models
 logger = logging.getLogger("[RabbitMQ-RPC ms-docentes]")
 
 class DocentesRpcHandlers:
+    def _materia_matches(self, materia, materia_id):
+        materia_id_str = str(materia_id)
+        return str(materia.id) == materia_id_str or materia.nrc == materia_id_str
+
     def get_alumno(self, data):
         alumno_id = data.get("alumnoId")
         db = SessionLocal()
@@ -29,7 +33,7 @@ class DocentesRpcHandlers:
             alumnos = (
                 db.query(models.Alumno)
                 .filter(
-                    models.Alumno.nrc == materia_id,
+                    models.Alumno.nrc == str(materia_id),
                     models.Alumno.activo == True,
                 )
                 .all()
@@ -37,7 +41,7 @@ class DocentesRpcHandlers:
             return {
                 "success": True,
                 "alumnos": [
-                    {"id": str(a.id), "nombre": a.nombre, "email": a.email or ""}
+                    {"id": str(a.id), "nombre": a.nombre, "email": a.email or "", "matricula": a.matricula}
                     for a in alumnos
                 ]
             }
@@ -50,17 +54,20 @@ class DocentesRpcHandlers:
         alumno_id = data.get("id")
         db = SessionLocal()
         try:
-            alumno = db.query(models.Alumno).filter(
-                models.Alumno.id == int(alumno_id)
-            ).first()
-            if not alumno:
+            from sqlalchemy import text
+            # Consulta cruda para asegurar que traemos la matrícula sin depender del modelo
+            query = text("SELECT nombre, matricula FROM alumnos WHERE id = :aid")
+            result = db.execute(query, {"aid": int(alumno_id)}).fetchone()
+            
+            if not result:
                 return {"success": False, "message": "Alumno no encontrado"}
+                
             return {
                 "success": True,
                 "data": {
-                    "id": str(alumno.id),
-                    "nombre": alumno.nombre,
-                    "email": alumno.email or "",
+                    "id": str(alumno_id),
+                    "nombre": result[0],
+                    "matricula": result[1] if result[1] else "Sin Matricula"
                 }
             }
         except Exception as e:
@@ -97,10 +104,20 @@ class DocentesRpcHandlers:
         try:
             alumno = db.query(models.Alumno).filter(
                 models.Alumno.id == int(alumno_id),
-                models.Alumno.nrc == materia_id,
                 models.Alumno.activo == True
             ).first()
-            return {"success": True, "result": bool(alumno)}
+            if not alumno:
+                return {"success": True, "result": False}
+
+            materia = db.query(models.MateriaDocente).filter(
+                (models.MateriaDocente.id == int(materia_id)) |
+                (models.MateriaDocente.nrc == str(materia_id))
+            ).first()
+            if not materia:
+                return {"success": True, "result": False}
+
+            result = alumno.nrc == materia.nrc
+            return {"success": True, "result": result}
         except Exception as e:
             return {"success": False, "message": str(e)}
         finally:
@@ -113,7 +130,8 @@ class DocentesRpcHandlers:
         try:
             materia = db.query(models.MateriaDocente).filter(
                 models.MateriaDocente.docente_id == int(docente_id),
-                models.MateriaDocente.nrc == materia_id
+                (models.MateriaDocente.id == int(materia_id)) |
+                (models.MateriaDocente.nrc == str(materia_id))
             ).first()
             return {"success": True, "result": bool(materia)}
         except Exception as e:
