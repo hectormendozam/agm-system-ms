@@ -108,7 +108,7 @@ class NotificationController {
     async handleResetPassword(data) {
         const { email, token } = data;
         const baseUrl = process.env.FRONTEND_URL;
-        const resetUrl = `${baseUrl}/restablecer?token=${token}`;
+        const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
         const mailOptions = {
             to: email,
