@@ -1,42 +1,45 @@
 import os
 import sys
 
-# Asegurar que el directorio raíz del microservicio esté en el path de búsqueda de Python
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from fastapi import Security, HTTPException, Depends
+from fastapi import Security, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from rabbitmq_manager import RabbitMQRpcClient
-
+import jwt as pyjwt
 
 security = HTTPBearer()
 
-def get_current_user_rpc(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """
-    Extrae el token y pregunta a ms-auth por RabbitMQ si es válido.
-    """
+_SECRET_KEY = os.getenv("SECRET_KEY", "clave_super_secreta_desarrollo_agm")
+_ALGORITHM  = os.getenv("JWT_ALGORITHM", "HS256")
+
+_ROLE_MAP = {
+    "administrador": "ADMIN",
+    "admin":         "ADMIN",
+    "docente":       "DOCENTE",
+    "profesor":      "DOCENTE",
+    "alumno":        "ALUMNO",
+    "estudiante":    "ALUMNO",
+}
+
+def _normalize_role(value: str) -> str:
+    return _ROLE_MAP.get(str(value).lower(), str(value).upper())
+
+
+def get_current_user_rpc(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+) -> dict:
+    """Valida el Bearer Token localmente usando el mismo SECRET_KEY que ms-auth."""
     token = credentials.credentials
     try:
-        rpc_client = RabbitMQRpcClient()
-        # Llamada RPC síncrona por software, asíncrona por red
-        response = rpc_client.call(
-            queue_name='rpc_auth_queue',
-            action='validate_token',
-            data={'token': token}
-        )
-
-        if response and response.get('valid') is True:
-            user = response.get('user', {})
-            # Retorna el diccionario con {'user_id': 1, 'rol': 'docente', ...}
-            return {
-                'user_id': user.get('id'),
-                'rol': user.get('rol'),
-                'email': user.get('email')
-            }
-        else:
-            raise HTTPException(status_code=401, detail="Token inválido o expirado")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en el bus de eventos: {str(e)}")
+        payload = pyjwt.decode(token, _SECRET_KEY, algorithms=[_ALGORITHM])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except pyjwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail=f"Token inválido: {exc}")
+    return {
+        "user_id": payload.get("sub"),
+        "rol":     _normalize_role(str(payload.get("rol", ""))),
+        "email":   payload.get("email"),
+    }
