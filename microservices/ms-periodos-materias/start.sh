@@ -5,6 +5,10 @@ until python -c "import os, psycopg2; psycopg2.connect(host=os.getenv('DB_HOST',
   sleep 2
 done
 
+until python -c "import pika, os; pika.BlockingConnection(pika.URLParameters(os.getenv('RABBITMQ_URL','amqp://guest:guest@rabbitmq:5672'))).close(); print('rabbitmq ready')"; do
+  sleep 2
+done
+
 python manage.py makemigrations academic
 python manage.py migrate --fake-initial
 python manage.py runrabbitmq &

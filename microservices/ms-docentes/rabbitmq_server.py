@@ -179,6 +179,21 @@ class DocentesRpcHandlers:
         finally:
             db.close()
 
+    def get_materia_by_nrc(self, data):
+        nrc = data.get("nrc")
+        db = SessionLocal()
+        try:
+            materia = db.query(models.MateriaDocente).filter(
+                models.MateriaDocente.nrc == str(nrc)
+            ).first()
+            if not materia:
+                return {"success": False, "message": "Materia no encontrada"}
+            return {"success": True, "id": materia.id, "nrc": materia.nrc, "nombre": materia.nombre_materia}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+        finally:
+            db.close()
+
 def serve():
     handlers = DocentesRpcHandlers()
     server = RabbitMQRpcServer(queue_name='rpc_docentes_queue')
@@ -189,6 +204,7 @@ def serve():
     server.register_action('get_docente_by_id', handlers.get_docente_by_id)
     server.register_action('is_alumno_en_materia', handlers.is_alumno_en_materia)
     server.register_action('is_docente_en_materia', handlers.is_docente_en_materia)
+    server.register_action('get_materia_by_nrc', handlers.get_materia_by_nrc)
     server.start()
 
 if __name__ == "__main__":

@@ -143,6 +143,22 @@ def get_calificaciones_stats(materia_id: str) -> dict | None:
         logger.error(f"Error calling get_calificaciones_stats: {e}")
         return None
 
+def get_materia_docentes_id(nrc: str) -> str | None:
+    """Devuelve el row ID de materias_docente para un NRC dado."""
+    try:
+        resp = rpc_client.call(
+            queue_name='rpc_docentes_queue',
+            action='get_materia_by_nrc',
+            data={"nrc": nrc}
+        )
+        if resp and resp.get("success"):
+            return str(resp["id"])
+        return None
+    except Exception as e:
+        logger.error(f"Error getting materia row id for NRC {nrc}: {e}")
+        return None
+
+
 def get_concentrado_alumnos(materia_id: str) -> list:
     """Obtiene el concentrado de calificaciones por alumno vía ms-calificaciones RPC."""
     try:

@@ -115,7 +115,8 @@ def reporte_calificaciones(
             )
 
         alumnos = rabbitmq_client.get_alumnos_by_materia(materia_id) or []
-        concentrado = rabbitmq_client.get_concentrado_alumnos(materia_id)
+        materia_docentes_id = rabbitmq_client.get_materia_docentes_id(materia_id) or materia_id
+        concentrado = rabbitmq_client.get_concentrado_alumnos(materia_docentes_id)
         grades_by_matricula = {c["alumno_id"]: c for c in concentrado}
 
         datos = {
