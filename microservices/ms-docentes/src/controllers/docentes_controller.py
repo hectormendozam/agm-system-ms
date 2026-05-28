@@ -2,14 +2,14 @@
 controllers/docentes_controller.py
 Router FastAPI para el recurso /docentes.
 """
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Header
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Path
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from database import get_db
-from schemas import ImportacionResponse
-import models
+from schemas import ImportacionResponse, BajaDocenteResponse
 from src.services import docentes_service
+from src.notifications import rabbitmq as _rmq
 from auth_middleware import get_current_user_rpc
 
 router = APIRouter(prefix="/docentes", tags=["Docentes"], dependencies=[Depends(get_current_user_rpc)])
@@ -23,6 +23,7 @@ def _docente_dict(docente) -> dict:
         "email": docente.email,
         "clave_empleado": "",
         "departamento": docente.departamento,
+        "activo": docente.activo,
         "materias": [
             {
                 "id": materia.id,
@@ -55,33 +56,27 @@ async def importar_docentes(
     archivo: UploadFile = File(None, description="PDF de programacion academica"),
     file: UploadFile = File(None, description="Alias usado por algunos frontends"),
     db: Session = Depends(get_db),
-    authorization: Optional[str] = Header(None),
 ):
     archivo = _resolver_archivo(archivo, file)
     contenido = await archivo.read()
     try:
-        docentes = docentes_service.importar_docentes_desde_pdf(contenido, db)
+        total = docentes_service.importar_docentes_desde_pdf(contenido, db)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Error al procesar el PDF: {exc}")
 
+    docentes = docentes_service.buscar_docentes(db)
     import os
-    from src.notifications import rabbitmq as _rmq
-    token = authorization.replace("Bearer ", "") if authorization else "no-token"
-    whitelist = [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()]
-
     _rmq.publish_to_queue(
         "docentes_import_jobs_queue",
         {
             "job_type": "crear_usuarios_docentes",
             "docente_ids": [d.id for d in docentes],
-            "token": token,
-            "whitelist": whitelist,
+            "whitelist": [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()],
         },
     )
-
     return ImportacionResponse(
         mensaje="Importacion de docentes completada",
-        registros_importados=len(docentes),
+        registros_importados=total,
     )
 
 
@@ -94,33 +89,27 @@ async def importar_directorio_docentes(
     archivo: UploadFile = File(None, description="PDF de directorio de personal docente"),
     file: UploadFile = File(None, description="Alias usado por algunos frontends"),
     db: Session = Depends(get_db),
-    authorization: Optional[str] = Header(None),
 ):
     archivo = _resolver_archivo(archivo, file)
     contenido = await archivo.read()
     try:
-        docentes = docentes_service.importar_directorio_docentes_pdf(contenido, db)
+        total = docentes_service.importar_directorio_docentes_pdf(contenido, db)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Error al procesar el PDF del directorio: {exc}")
 
+    docentes = docentes_service.buscar_docentes(db)
     import os
-    from src.notifications import rabbitmq as _rmq
-    token = authorization.replace("Bearer ", "") if authorization else "no-token"
-    whitelist = [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()]
-
     _rmq.publish_to_queue(
         "docentes_import_jobs_queue",
         {
             "job_type": "crear_usuarios_docentes",
             "docente_ids": [d.id for d in docentes],
-            "token": token,
-            "whitelist": whitelist,
+            "whitelist": [e.strip().lower() for e in os.getenv("NOTIFY_DOCENTE_WHITELIST", "").split(",") if e.strip()],
         },
     )
-
     return ImportacionResponse(
         mensaje="Importacion del directorio docente completada",
-        registros_importados=len(docentes),
+        registros_importados=total,
     )
 
 
@@ -137,26 +126,30 @@ def listar_docentes(
     return {"count": len(docentes), "next": None, "previous": None, "results": [_docente_dict(d) for d in docentes]}
 
 
-@router.get(
-    "/{docente_id}/materias/",
-    summary="Listar materias de un docente",
+@router.delete(
+    "/{id}/baja",
+    response_model=BajaDocenteResponse,
+    summary="Dar de baja a un docente",
+    description="Baja logica: el registro permanece en BD con activo=False para conservar historial.",
 )
-def listar_materias_docente(docente_id: int, db: Session = Depends(get_db)):
-    docente = db.query(models.Docente).filter(models.Docente.id == docente_id).first()
-    if docente is None:
-        raise HTTPException(status_code=404, detail=f"Docente {docente_id} no encontrado")
+def dar_baja_docente(
+    id: int = Path(..., description="ID del docente en la BD"),
+    db: Session = Depends(get_db),
+):
+    docente = docentes_service.dar_de_baja_docente(id, db)
+    return BajaDocenteResponse(
+        mensaje=f"Docente {docente.nombre} dado de baja correctamente",
+        docente_id=docente.id,
+    )
 
-    materias = [
-        {
-            "id": materia.id,
-            "nrc": materia.nrc,
-            "nombre": materia.nombre_materia,
-            "nombre_materia": materia.nombre_materia,
-            "seccion": materia.seccion,
-            "clave": materia.clave,
-            "horario": materia.horario,
-        }
-        for materia in docente.materias
-    ]
 
-    return {"data": materias}
+@router.delete(
+    "/{id}/",
+    response_model=BajaDocenteResponse,
+    summary="Dar de baja a un docente",
+)
+def dar_baja_docente_alias(
+    id: int = Path(..., description="ID del docente en la BD"),
+    db: Session = Depends(get_db),
+):
+    return dar_baja_docente(id=id, db=db)

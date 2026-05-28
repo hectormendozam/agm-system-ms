@@ -1,14 +1,9 @@
 """
-schemas.py – Contratos de datos (Pydantic) para el MS-3: Docentes & Alumnos
-Separados en Request / Response siguiendo el patrón de ms-auth.
+schemas.py - Contratos de datos (Pydantic) para el MS-3: Docentes & Alumnos.
 """
 from pydantic import BaseModel
 from typing import Optional, List
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# DOCENTES
-# ──────────────────────────────────────────────────────────────────────────────
 
 class MateriaDocenteResponse(BaseModel):
     id: int
@@ -29,6 +24,7 @@ class DocenteResponse(BaseModel):
     email: Optional[str] = None
     clave_empleado: Optional[str] = None
     departamento: Optional[str] = None
+    activo: bool = True
     materias: List[MateriaDocenteResponse] = []
 
     class Config:
@@ -36,14 +32,13 @@ class DocenteResponse(BaseModel):
 
 
 class ImportacionResponse(BaseModel):
-    """Respuesta genérica para operaciones de importación."""
+    """Respuesta generica para operaciones de importacion."""
     mensaje: str
     registros_importados: int
+    cuentas_creadas: int = 0
+    cuentas_existentes: int = 0
+    cuentas_fallidas: int = 0
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# ALUMNOS
-# ──────────────────────────────────────────────────────────────────────────────
 
 class AlumnoResponse(BaseModel):
     id: int
@@ -60,7 +55,13 @@ class AlumnoResponse(BaseModel):
 
 
 class BajaResponse(BaseModel):
-    """Confirmación de baja de materia."""
+    """Confirmacion de baja de materia."""
     mensaje: str
     alumno_id: int
     nrc: str
+
+
+class BajaDocenteResponse(BaseModel):
+    """Confirmacion de baja logica de docente."""
+    mensaje: str
+    docente_id: int

@@ -17,6 +17,7 @@ from src.controllers.alumnos_controller import router as alumnos_router
 Base.metadata.create_all(bind=engine)
 with engine.begin() as conn:
     conn.execute(text("ALTER TABLE alumnos ADD COLUMN IF NOT EXISTS numero_registro INTEGER"))
+    conn.execute(text("ALTER TABLE docentes ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE"))
 
 # ── 2. Inicializar la aplicación FastAPI ─────────────────────────────────────
 app = FastAPI(
@@ -59,14 +60,10 @@ def health_check():
 def start_background_workers():
     import rabbitmq_server
     from src import import_worker
-
     t_rpc = threading.Thread(target=rabbitmq_server.serve, daemon=True, name="rpc-server")
     t_rpc.start()
-    print("[Startup] Servidor RabbitMQ-RPC iniciado en hilo daemon")
-
     t_worker = threading.Thread(target=import_worker.serve, daemon=True, name="import-worker")
     t_worker.start()
-    print("[Startup] ImportWorker iniciado en hilo daemon")
 
 
 # ── 6. Punto de entrada para ejecución directa ───────────────────────────────

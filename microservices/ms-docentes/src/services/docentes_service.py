@@ -9,6 +9,7 @@ import re
 import logging
 from typing import List
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
 import models
 
@@ -255,16 +256,16 @@ def _finalizar_registro(registro: dict) -> List[dict]:
     ]
 
 
-def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> List[models.Docente]:
+def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> int:
     """
     Procesa el PDF de programación académica y persiste los datos en PostgreSQL.
     Estrategia: upsert por nombre de docente + NRC para evitar duplicados en
     reimportaciones.
 
     Returns:
-        Lista de docentes procesados.
+        Número de registros de materias importados.
     """
-    docentes_procesados = []
+    registros_importados = 0
 
     with pdfplumber.open(BytesIO(contenido)) as pdf:
         filas = []
@@ -294,41 +295,23 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> List[models.Do
         if fila["horario"] not in registro["horarios"]:
             registro["horarios"].append(fila["horario"])
 
-    # Pre-cargar docentes existentes para comparación normalizada
-    todos_docentes = db.query(models.Docente).all()
-    docentes_map = {_normalizar_nombre(d.nombre): d for d in todos_docentes}
-
     for fila in agrupados.values():
         nombre_docente = fila["docente_nombre"]
         if not nombre_docente:
             continue
 
-        nombre_norm = _normalizar_nombre(nombre_docente)
-
-        # 1. Buscar o crear el docente en ms-docentes
-        docente = docentes_map.get(nombre_norm)
-        
+        # 1. Buscar o crear el docente
+        docente = (
+            db.query(models.Docente)
+            .filter(models.Docente.nombre == nombre_docente)
+            .first()
+        )
         if not docente:
-            docente = models.Docente(nombre=nombre_docente)
+            docente = models.Docente(nombre=nombre_docente, activo=True)
             db.add(docente)
             db.flush()   # obtenemos el id sin hacer commit todavía
-            
-            # 1.1 Registrar en Auth con email genérico o temporal si no lo tiene aún
-            username_part = re.sub(r'[^a-z0-9]', '', nombre_docente.lower())[:20]
-            temp_email = f"{username_part}@docente.buap.mx"
-            temp_clave = "password123"
-            
-            rpc_client.call('rpc_auth_queue', 'create_user', {
-                "email": temp_email,
-                "password": temp_clave,
-                "rol": "Docente"
-            })
-            
-            docentes_map[nombre_norm] = docente
-
-        if docente.id not in vistos_ids:
-            docentes_procesados.append(docente)
-            vistos_ids.add(docente.id)
+        else:
+            docente.activo = True
 
         # 2. Upsert de la materia del docente
         materia = (
@@ -349,24 +332,23 @@ def importar_docentes_desde_pdf(contenido: bytes, db: Session) -> List[models.Do
                 horario=" ; ".join(fila["horarios"]),
             )
             db.add(materia)
+            registros_importados += 1
         else:
             # Actualiza datos si ya existía
             materia.nombre_materia = fila["nombre_materia"]
             materia.horario = " ; ".join(fila["horarios"])
 
     db.commit()
-    for d in docentes_procesados:
-        db.refresh(d)
-    return docentes_procesados
+    return registros_importados
 
 
 def listar_docentes(db: Session) -> List[models.Docente]:
     """Devuelve todos los docentes con sus materias (eager load automático)."""
-    return db.query(models.Docente).all()
+    return db.query(models.Docente).filter(models.Docente.activo == True).all()
 
 
 def buscar_docentes(db: Session, search: str | None = None) -> List[models.Docente]:
-    query = db.query(models.Docente)
+    query = db.query(models.Docente).filter(models.Docente.activo == True)
     if search:
         like = f"%{search}%"
         query = query.filter(
@@ -375,6 +357,19 @@ def buscar_docentes(db: Session, search: str | None = None) -> List[models.Docen
             | (models.Docente.departamento.ilike(like))
         )
     return query.order_by(models.Docente.nombre).all()
+
+
+def dar_de_baja_docente(docente_id: int, db: Session) -> models.Docente:
+    docente = db.query(models.Docente).filter(models.Docente.id == docente_id).first()
+    if not docente:
+        raise HTTPException(status_code=404, detail=f"Docente {docente_id} no encontrado")
+    if not docente.activo:
+        raise HTTPException(status_code=409, detail="El docente ya esta dado de baja")
+
+    docente.activo = False
+    db.commit()
+    db.refresh(docente)
+    return docente
 
 
 # ── Importación del Directorio "Personal Docente" ─────────────────────────────
@@ -417,84 +412,50 @@ def _parsear_pagina_directorio(pagina) -> List[dict]:
             
     return registros
 
-from rabbitmq_manager import RabbitMQRpcClient
-import secrets
-import string
-
-def _generar_clave_unica(length=8) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for i in range(length))
-
-import unicodedata
-
-def _normalizar_nombre(nombre: str) -> str:
-    """Normaliza un nombre: quita acentos, convierte a minúsculas y limpia espacios/puntuación."""
-    if not nombre:
-        return ""
-    # Quitar acentos
-    s = ''.join(c for c in unicodedata.normalize('NFD', nombre)
-               if unicodedata.category(c) != 'Mn')
-    # Quitar guiones y puntuación, pasar a minúsculas
-    s = re.sub(r'[^a-zA-Z\s]', ' ', s).lower()
-    # Limpiar espacios
-    return ' '.join(s.split())
-
 def importar_directorio_docentes_pdf(contenido: bytes, db: Session) -> int:
     """
     Procesa el PDF de "Personal Docente" para actualizar/crear la información de los docentes
-    (email y departamento/ubicación) y los registra en MS-Auth.
+    (email y departamento/ubicación).
+    
+    Returns:
+        Número de registros de docentes importados/actualizados.
     """
     registros_importados = 0
-    rpc_client = RabbitMQRpcClient()
 
     with pdfplumber.open(BytesIO(contenido)) as pdf:
         filas = []
         for pagina in pdf.pages:
             filas.extend(_parsear_pagina_directorio(pagina))
 
-    # Pre-cargar todos los docentes para comparación normalizada
-    todos_docentes = db.query(models.Docente).all()
-    docentes_map = {_normalizar_nombre(d.nombre): d for d in todos_docentes}
-
     for fila in filas:
         nombre_docente = fila["nombre"]
         if not nombre_docente:
             continue
 
-        email = fila["email"]
-        clave = "password123"
-        nombre_norm = _normalizar_nombre(nombre_docente)
-
-        # 1. Buscar el docente usando el nombre normalizado
-        docente = docentes_map.get(nombre_norm)
-        
+        # 1. Buscar o crear el docente
+        docente = (
+            db.query(models.Docente)
+            .filter(models.Docente.nombre == nombre_docente)
+            .first()
+        )
         if not docente:
             docente = models.Docente(
                 nombre=nombre_docente,
-                email=email,
-                departamento=fila["ubicacion"]
+                email=fila["email"],
+                departamento=fila["ubicacion"],
+                activo=True,
             )
             db.add(docente)
-            db.flush()
-            # Actualizar el mapa por si el mismo docente aparece de nuevo
-            docentes_map[nombre_norm] = docente
+            registros_importados += 1
         else:
-            if email:
-                docente.email = email
+            docente.activo = True
+            # Actualiza datos si ya existía y si trajo nueva información
+            # Se prioriza la nueva importación
+            if fila["email"]:
+                docente.email = fila["email"]
             if fila["ubicacion"]:
                 docente.departamento = fila["ubicacion"]
-        
-        # 2. Registrar en Auth
-        if email:
-            rpc_client.call('rpc_auth_queue', 'create_user', {
-                "email": email,
-                "password": "password123", # Password por defecto para docentes importados
-                "rol": "Docente"
-            })
-
-        registros_importados += 1
+            registros_importados += 1
 
     db.commit()
-    for d in docentes_procesados:
-        db.refresh(d)
-    return docentes_procesados
+    return registros_importados

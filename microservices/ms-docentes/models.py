@@ -18,6 +18,7 @@ class Docente(Base):
     nombre      = Column(String(200), nullable=False, index=True)
     email       = Column(String(200), unique=True, nullable=True, index=True)
     departamento = Column(String(200), nullable=True)
+    activo      = Column(Boolean, default=True, nullable=False)
     # Relación 1-a-muchos: un docente imparte varias materias
     materias    = relationship("MateriaDocente", back_populates="docente")
 
