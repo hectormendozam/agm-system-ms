@@ -33,9 +33,10 @@ class Periodo(models.Model):
 class Materia(models.Model):
     nrc = models.CharField(max_length=20, unique=True)
     nombre = models.CharField(max_length=160)
+    creditos = models.PositiveSmallIntegerField(default=0)
     seccion = models.CharField(max_length=20)
     clave = models.CharField(max_length=40, blank=True, default="")
-    docente_id = models.PositiveIntegerField()
+    docente_id = models.PositiveIntegerField(null=True, blank=True, default=None)
     docente_nombre = models.CharField(max_length=160, blank=True, default="")
     horario = models.CharField(max_length=120, blank=True, default="")
     periodo_id = models.PositiveIntegerField()
@@ -56,9 +57,13 @@ class Materia(models.Model):
             raise ValidationError({"nrc": "El NRC no puede estar vacío."})
         if not self.nombre.strip():
             raise ValidationError({"nombre": "El nombre de la materia no puede estar vacío."})
+        if self.creditos in (None, ""):
+            self.creditos = 0
+        if self.creditos < 0:
+            raise ValidationError({"creditos": "Los créditos no pueden ser negativos."})
         if not self.seccion.strip():
             raise ValidationError({"seccion": "La sección no puede estar vacía."})
-        if self.docente_id <= 0:
+        if self.docente_id is not None and self.docente_id <= 0:
             raise ValidationError({"docente_id": "El identificador del docente debe ser mayor que cero."})
         if self.periodo_id <= 0:
             raise ValidationError({"periodo_id": "El identificador del periodo debe ser mayor que cero."})

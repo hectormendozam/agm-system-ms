@@ -21,10 +21,24 @@ class PeriodoSerializer(serializers.ModelSerializer):
 
 
 class MateriaSerializer(serializers.ModelSerializer):
+    creditos = serializers.IntegerField(required=False, allow_null=True, min_value=0, default=0)
+
     class Meta:
         model = Materia
         fields = "__all__"
         read_only_fields = ("creado_en", "actualizado_en")
+
+    def validate_creditos(self, value):
+        if value in (None, ""):
+            return 0
+        return value
+
+    def validate_docente_id(self, value):
+        if value in (None, ""):
+            return None
+        if value <= 0:
+            raise serializers.ValidationError("El identificador del docente debe ser mayor que cero.")
+        return value
 
     def validate_periodo_id(self, value):
         if value <= 0:
