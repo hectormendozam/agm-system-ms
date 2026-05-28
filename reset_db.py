@@ -101,7 +101,7 @@ def reset_databases():
         # Generar el hash usando la librería bcrypt directamente
         hashed_pass = get_password_hash(admin_pass)
         
-        cur.execute("INSERT INTO usuarios (email, password_hash, rol) VALUES (%s, %s, %s) ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, rol = EXCLUDED.rol;", 
+        cur.execute("INSERT INTO usuarios (email, password_hash, rol) VALUES (%s, %s, %s) ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, rol = EXCLUDED.rol;",
                     (admin_email, hashed_pass, "ADMIN"))
         
         print(f"\n--- Usuario de prueba listo ---")
@@ -113,9 +113,6 @@ def reset_databases():
         conn.close()
     except Exception as e:
         print(f"[ERROR] No se pudo crear el usuario admin: {e}")
-
-if __name__ == "__main__":
-    reset_databases()
 
 if __name__ == "__main__":
     reset_databases()

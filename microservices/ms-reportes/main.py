@@ -8,8 +8,12 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from database import engine, Base, get_db
-from auth_middleware import require_roles
+from auth import require_roles
 import models, schemas, rabbitmq_client
+
+ADMIN   = "ADMIN"
+DOCENTE = "DOCENTE"
+ALUMNO  = "ALUMNO"
 from generadores import (
     generar_excel_calificaciones, generar_pdf_calificaciones,
     generar_excel_asistencias,    generar_pdf_asistencias,
@@ -76,7 +80,7 @@ def reporte_calificaciones(
     materia_id: str,
     formato: str = Query(default="pdf", enum=["pdf", "xls"]),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
 ):
     try:
         materia_info = rabbitmq_client.get_materia_by_id(int(materia_id))
@@ -137,7 +141,7 @@ def reporte_calificaciones_con_datos(
     body: schemas.DatosCalificacionesReporte,
     formato: str = Query(default="pdf", enum=["pdf", "xls"]),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
 ):
     try:
         datos = body.model_dump()
@@ -188,7 +192,7 @@ def reporte_asistencias(
     materia_id: str,
     formato: str = Query(default="pdf", enum=["pdf", "xls"]),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
 ):
     try:
         materia_info = rabbitmq_client.get_materia_by_id(int(materia_id))
@@ -246,7 +250,7 @@ def reporte_asistencias_con_datos(
     body: schemas.DatosAsistenciasReporte,
     formato: str = Query(default="pdf", enum=["pdf", "xls"]),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
 ):
     try:
         datos = body.model_dump()
@@ -298,7 +302,7 @@ def estadisticas_docente(
     page:  int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
 ):
     offset = (page - 1) * limit
     query  = db.query(models.EstadisticaMateria).filter(
@@ -324,7 +328,7 @@ def estadisticas_docente(
 def registrar_estadisticas(
     estadistica: schemas.EstadisticaMateriaCreate,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador")),
+    _user: dict = Depends(require_roles(ADMIN)),
 ):
     nuevo = models.EstadisticaMateria(**estadistica.model_dump())
     db.add(nuevo)
@@ -346,7 +350,7 @@ def estadisticas_alumno(
     page:  int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador", "Docente", "Alumno")),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE, ALUMNO)),
 ):
     offset = (page - 1) * limit
     query  = db.query(models.EstadisticaAlumno).filter(
@@ -372,13 +376,56 @@ def estadisticas_alumno(
 def registrar_estadisticas_alumno(
     estadistica: schemas.EstadisticaAlumnoCreate,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador")),
+    _user: dict = Depends(require_roles(ADMIN)),
 ):
     nuevo = models.EstadisticaAlumno(**estadistica.model_dump())
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)
     return {"success": True, "message": "Estadísticas del alumno registradas correctamente", "data": nuevo}
+
+
+# ── Estadísticas – Comparativa histórica por materia ─────────────────────────
+
+@app.get(
+    "/estadisticas/comparar",
+    summary="Comparar rendimiento de una materia a través de distintos periodos",
+    tags=["Estadísticas"],
+)
+def comparar_estadisticas_por_materia(
+    materia_nombre: str = Query(..., description="Nombre de la materia a comparar"),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_roles(ADMIN, DOCENTE)),
+):
+    registros = (
+        db.query(models.EstadisticaMateria)
+        .filter(models.EstadisticaMateria.materia_nombre.ilike(f"%{materia_nombre}%"))
+        .order_by(models.EstadisticaMateria.fecha_registro.asc())
+        .all()
+    )
+
+    items = [
+        {
+            "periodo_nombre":       r.periodo_nombre,
+            "materia_nrc":          r.materia_nrc,
+            "docente_id":           r.docente_id,
+            "total_alumnos":        r.total_alumnos,
+            "promedio_general":     r.promedio_general,
+            "porcentaje_aprobados": r.porcentaje_aprobados,
+            "fecha_registro":       r.fecha_registro,
+        }
+        for r in registros
+    ]
+
+    return {
+        "success": True,
+        "message": f"{len(items)} periodo(s) encontrado(s) para '{materia_nombre}'",
+        "data": {
+            "materia_nombre": materia_nombre,
+            "total_periodos": len(items),
+            "periodos": items,
+        },
+    }
 
 
 # ── Historial de reportes generados ──────────────────────────────────────────
@@ -392,7 +439,7 @@ def historial_reportes(
     page:  int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_roles("Administrador")),
+    _user: dict = Depends(require_roles(ADMIN)),
 ):
     offset = (page - 1) * limit
     total  = db.query(models.ReporteGenerado).count()
