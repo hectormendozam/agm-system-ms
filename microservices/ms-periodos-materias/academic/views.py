@@ -18,14 +18,16 @@ def _user_role(user):
     return getattr(user, "rol", None)
 
 
+_ALLOWED_ROLES = {"Docente", "Administrador", "ADMIN", "DOCENTE"}
+
 class IsDocente(BasePermission):
     """Permite acceso solo a usuarios con rol Docente o Administrador."""
     def has_permission(self, request, view):
-        return _user_role(request.user) in {"Docente", "Administrador", "ADMIN"}
+        return _user_role(request.user) in _ALLOWED_ROLES
 
 class IsAdminOrDocente(BasePermission):
     def has_permission(self, request, view):
-        return _user_role(request.user) in {"Administrador", "Docente", "ADMIN"}
+        return _user_role(request.user) in _ALLOWED_ROLES
 
 
 class PeriodoViewSet(viewsets.ModelViewSet):
@@ -207,16 +209,41 @@ class MateriaViewSet(viewsets.ModelViewSet):
                 auth_token=token
             )
         except Exception as exc:
-            return self._error(f"No se pudo notificar el cierre de la materia: {str(exc)}", status.HTTP_502_BAD_GATEWAY)
+            import logging
+            logging.getLogger(__name__).warning(f"Cierre de materia sin notificación: {exc}")
+            return self._success(self.get_serializer(materia).data, "Materia cerrada correctamente.")
 
         if not notified:
-            return self._error("El servicio de notificaciones rechazó el cierre de la materia.", status.HTTP_502_BAD_GATEWAY)
+            return self._success(self.get_serializer(materia).data, "Materia cerrada correctamente.")
 
         return self._success(
             self.get_serializer(materia).data,
             "Materia cerrada y notificación enviada correctamente.",
         )
 
+
+    @action(detail=False, methods=["post"], url_path="cerrar-por-nrc",
+        permission_classes=[IsAuthenticated, IsAdminOrDocente])
+    def cerrar_por_nrc(self, request):
+        nrc = request.data.get("nrc") or request.query_params.get("nrc")
+        if not nrc:
+            return self._error("Se requiere el campo 'nrc'.", status.HTTP_400_BAD_REQUEST)
+        try:
+            materia = Materia.objects.get(nrc=nrc)
+        except Materia.DoesNotExist:
+            return self._error(f"No existe una materia con NRC {nrc}.", status.HTTP_404_NOT_FOUND)
+
+        materia.activo = False
+        materia.save()
+
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '') if auth_header else 'no-token'
+        try:
+            send_cierre_materia(materia_id=materia.id, materia_nombre=materia.nombre, nrc=materia.nrc, auth_token=token)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(f"Cierre sin notificación: {exc}")
+        return self._success(self.get_serializer(materia).data, "Materia cerrada correctamente.")
 
     @action(detail=False, methods=["get"], url_path="por-periodo/(?P<periodo_id>[^/.]+)")
     def por_periodo(self, request, periodo_id=None):

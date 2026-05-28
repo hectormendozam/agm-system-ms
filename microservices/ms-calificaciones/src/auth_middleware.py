@@ -6,6 +6,18 @@ security = HTTPBearer()
 
 _rpc_client = None
 
+_ROLE_MAP = {
+    "administrador": "ADMIN",
+    "admin": "ADMIN",
+    "docente": "DOCENTE",
+    "profesor": "DOCENTE",
+    "alumno": "ALUMNO",
+    "estudiante": "ALUMNO",
+}
+
+def _normalize_role(value: str) -> str:
+    return _ROLE_MAP.get(str(value).lower(), str(value).upper())
+
 
 def _get_rpc_client():
     global _rpc_client
@@ -55,7 +67,8 @@ def require_roles(*roles: str):
         credentials: HTTPAuthorizationCredentials = Security(security),
     ) -> dict:
         user = get_current_user(credentials)
-        if user.get("rol") not in roles:
+        allowed = {_normalize_role(r) for r in roles}
+        if _normalize_role(str(user.get("rol", ""))) not in allowed:
             raise HTTPException(
                 status_code=403,
                 detail=f"Acceso denegado. Roles permitidos: {list(roles)}",

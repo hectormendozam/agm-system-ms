@@ -12,6 +12,19 @@ from rabbitmq_manager import RabbitMQRpcClient
 
 security = HTTPBearer()
 
+_ROLE_MAP = {
+    "administrador": "ADMIN",
+    "admin": "ADMIN",
+    "docente": "DOCENTE",
+    "profesor": "DOCENTE",
+    "alumno": "ALUMNO",
+    "estudiante": "ALUMNO",
+}
+
+def _normalize_role(value: str) -> str:
+    return _ROLE_MAP.get(str(value).lower(), str(value).upper())
+
+
 def get_current_user_rpc(credentials: HTTPAuthorizationCredentials = Security(security)):
     """
     Extrae el token y pregunta a ms-auth por RabbitMQ si es válido.
@@ -43,7 +56,8 @@ def get_current_user_rpc(credentials: HTTPAuthorizationCredentials = Security(se
 def require_roles(*roles: str):
     """Devuelve una dependencia que valida el token vía RPC y exige uno de los roles dados."""
     def dependency(user_data: dict = Depends(get_current_user_rpc)) -> dict:
-        if user_data.get("rol") not in roles:
+        allowed = {_normalize_role(r) for r in roles}
+        if _normalize_role(str(user_data.get("rol", ""))) not in allowed:
             raise HTTPException(
                 status_code=403,
                 detail=f"Acceso denegado. Roles permitidos: {list(roles)}",

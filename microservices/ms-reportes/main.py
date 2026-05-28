@@ -42,6 +42,19 @@ app = FastAPI(
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 
+from starlette.requests import Request as StarletteRequest
+
+@app.middleware("http")
+async def strip_service_prefix(request: StarletteRequest, call_next):
+    """Gateway adds /reportes prefix to all paths. /estadisticas/* and /historial
+    routes don't have that prefix, so strip it for them."""
+    path = request.scope["path"]
+    for sub in ("/estadisticas", "/historial"):
+        if path.startswith(f"/reportes{sub}"):
+            request.scope["path"] = path[len("/reportes"):]
+            break
+    return await call_next(request)
+
 origins = [
     "https://agm-system-frontend-joselyn-agm.vercel.app",
     "https://agm-system-frontend-30ytwlq1y-joselyn-agm.vercel.app",

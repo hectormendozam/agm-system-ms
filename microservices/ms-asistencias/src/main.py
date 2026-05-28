@@ -23,6 +23,19 @@ app = FastAPI(
 
 event_publisher = RabbitMQManager()
 
+from starlette.requests import Request as StarletteRequest
+
+@app.middleware("http")
+async def strip_service_prefix(request: StarletteRequest, call_next):
+    """Gateway adds /asistencias prefix to all paths. Strip it for routes like
+    /sesiones/* and /qr/* that don't expect it, but keep /asistencias/* as-is."""
+    path = request.scope["path"]
+    for sub in ("/sesiones", "/qr", "/estadisticas"):
+        if path.startswith(f"/asistencias{sub}"):
+            request.scope["path"] = path[len("/asistencias"):]
+            break
+    return await call_next(request)
+
 origins = [
     "https://agm-system-frontend-joselyn-agm.vercel.app",
     "https://agm-system-frontend-30ytwlq1y-joselyn-agm.vercel.app",

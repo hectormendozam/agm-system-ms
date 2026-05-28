@@ -149,12 +149,34 @@ class DocentesRpcHandlers:
         finally:
             db.close()
 
+    def get_alumno_by_matricula(self, data):
+        matricula = str(data.get("matricula", "")).strip()
+        db = SessionLocal()
+        try:
+            alumno = db.query(models.Alumno).filter(models.Alumno.matricula == matricula).first()
+            if not alumno:
+                return {"success": False, "message": "Alumno no encontrado"}
+            return {
+                "success": True,
+                "data": {
+                    "nombre": alumno.nombre,
+                    "matricula": alumno.matricula,
+                    "email": alumno.email or "",
+                    "nrc": alumno.nrc,
+                }
+            }
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+        finally:
+            db.close()
+
 def serve():
     handlers = DocentesRpcHandlers()
     server = RabbitMQRpcServer(queue_name='rpc_docentes_queue')
     server.register_action('get_alumno', handlers.get_alumno)
     server.register_action('get_alumnos_by_materia', handlers.get_alumnos_by_materia)
     server.register_action('get_alumno_by_id', handlers.get_alumno_by_id)
+    server.register_action('get_alumno_by_matricula', handlers.get_alumno_by_matricula)
     server.register_action('get_docente_by_id', handlers.get_docente_by_id)
     server.register_action('is_alumno_en_materia', handlers.is_alumno_en_materia)
     server.register_action('is_docente_en_materia', handlers.is_docente_en_materia)
