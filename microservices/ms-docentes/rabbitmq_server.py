@@ -30,10 +30,19 @@ class DocentesRpcHandlers:
         materia_id = data.get("materiaId")
         db = SessionLocal()
         try:
+            nrc = str(materia_id)
+            try:
+                mat = db.query(models.MateriaDocente).filter(
+                    models.MateriaDocente.id == int(materia_id)
+                ).first()
+                if mat:
+                    nrc = mat.nrc
+            except (ValueError, TypeError):
+                pass
             alumnos = (
                 db.query(models.Alumno)
                 .filter(
-                    models.Alumno.nrc == str(materia_id),
+                    models.Alumno.nrc == nrc,
                     models.Alumno.activo == True,
                 )
                 .all()

@@ -143,36 +143,57 @@ def get_calificaciones_stats(materia_id: str) -> dict | None:
         logger.error(f"Error calling get_calificaciones_stats: {e}")
         return None
 
-def construir_sesiones_asistencia(alumnos: list, materia_id: str) -> list:
+def get_concentrado_alumnos(materia_id: str) -> list:
+    """Obtiene el concentrado de calificaciones por alumno vía ms-calificaciones RPC."""
+    try:
+        response = rpc_client.call(
+            queue_name='rpc_calificaciones_queue',
+            action='get_concentrado_alumnos',
+            data={"materia_id": materia_id}
+        )
+        if response.get("success"):
+            return response.get("alumnos", [])
+        return []
+    except Exception as e:
+        logger.error(f"Error calling get_concentrado_alumnos: {e}")
+        return []
+
+
+def construir_sesiones_asistencia(alumnos: list, materia_db_id: str) -> list:
     """
-    Combina datos de alumnos con sus asistencias reales.
-    Si no hay datos, devuelve una estructura vacía/demo.
+    Obtiene las asistencias reales de cada alumno y las agrupa por fecha de sesión.
+    materia_db_id debe ser el ID entero de ms-periodos-materias (no el NRC).
+    Retorna: [{fecha: str, alumnos: [{matricula, nombre, estado, hora}]}]
     """
-    sesiones = []
+    from collections import defaultdict
+    sesiones_por_fecha: dict[str, list] = defaultdict(list)
+
     try:
         for alumno in alumnos:
             resp = rpc_client.call(
                 queue_name='rpc_asistencias_queue',
                 action='get_asistencia_alumno',
-                data={
-                    "alumnoId": alumno["id"],
-                    "materiaId": materia_id
-                }
+                data={"alumnoId": str(alumno["id"]), "materiaId": materia_db_id}
             )
-            if resp.get("success"):
-                asistencias = resp.get("asistencias", [])
-                sesiones.append({
-                    "alumno_id": alumno["id"],
-                    "alumno_nombre": alumno["nombre"],
-                    "asistencias": asistencias
+            if not resp.get("success"):
+                continue
+            for reg in resp.get("asistencias", []):
+                hr = reg.get("hora_registro", "")
+                fecha = hr.split(" ")[0] if " " in hr else hr[:10]
+                hora = hr.split(" ")[1][:5] if " " in hr else "—"
+                if not fecha:
+                    continue
+                sesiones_por_fecha[fecha].append({
+                    "matricula": str(alumno.get("matricula", alumno["id"])),
+                    "nombre": alumno.get("nombre", ""),
+                    "estado": reg.get("estado", "Presente"),
+                    "hora": hora,
                 })
-            else:
-                sesiones.append({
-                    "alumno_id": alumno["id"],
-                    "alumno_nombre": alumno["nombre"],
-                    "asistencias": []
-                })
-        return sesiones
+
+        return [
+            {"fecha": fecha, "alumnos": alumnos_list}
+            for fecha, alumnos_list in sorted(sesiones_por_fecha.items())
+        ]
     except Exception as e:
         logger.error(f"Error construyendo sesiones de asistencia: {e}")
         return []

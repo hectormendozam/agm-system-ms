@@ -50,6 +50,22 @@ def get_alumno_nombre(matricula: str) -> str:
         return matricula
 
 
+def get_materia_info(materia_id: str) -> dict | None:
+    """Retorna el objeto completo de una materia (incluye activo) por su DB ID entero."""
+    try:
+        resp = rpc_client.call(
+            queue_name="rpc_periodos_queue",
+            action="get_materia_by_id",
+            data={"id": int(materia_id)},
+        )
+        if resp and resp.get("success"):
+            return resp["data"]
+        return None
+    except Exception as e:
+        logger.error(f"Error al obtener info de materia {materia_id}: {e}")
+        return None
+
+
 def validar_propiedad_materia(docente_id: str, materia_id: str, docente_email: str = None) -> bool:
     """Consulta si el docente es dueño de la materia vía RPC.
     Pasa el email para resolver el docente_id real de ms-docentes (el JWT usa el id de ms-auth)."""

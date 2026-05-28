@@ -17,6 +17,7 @@ from src.rabbitmq_client import (
     get_materia_nrc,
     get_alumnos_por_nrc,
     get_alumno_nombre,
+    get_materia_info,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -88,6 +89,10 @@ def crear_ponderaciones(
     if user["rol"] == "DOCENTE":
         if not validar_propiedad_materia(str(user["id"]), materia_id, user.get("email")):
             raise HTTPException(status_code=403, detail="Acceso denegado.")
+
+    materia = get_materia_info(materia_id)
+    if materia and materia.get("activo") is False:
+        raise HTTPException(status_code=409, detail="La materia está cerrada. No se pueden modificar ponderaciones.")
 
     if not payload.ponderaciones:
         raise HTTPException(status_code=400, detail="Debe enviar al menos una ponderación.")
@@ -264,6 +269,10 @@ async def cargar_calificaciones_excel(
         if not validar_propiedad_materia(str(user["id"]), str(actividad.materia_id), user.get("email")):
             raise HTTPException(status_code=403, detail="Acceso denegado.")
 
+    materia = get_materia_info(str(actividad.materia_id))
+    if materia and materia.get("activo") is False:
+        raise HTTPException(status_code=409, detail="La materia está cerrada. No se pueden registrar calificaciones.")
+
     if not file.filename.endswith(('.xls', '.xlsx')):
         raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx)")
 
@@ -297,6 +306,12 @@ async def cargar_calificaciones_excel(
             detail=f"Columnas necesarias no encontradas. Detectadas: {list(df.columns)}"
         )
 
+    alumnos_materia = get_alumnos_por_nrc(str(actividad.materia_id))
+    email_to_matricula = {
+        a["email"].lower(): a["matricula"]
+        for a in alumnos_materia if a.get("email")
+    }
+
     registros = 0
     for _, row in df.iterrows():
         raw = str(row[col_matricula]).strip()
@@ -305,7 +320,10 @@ async def cargar_calificaciones_excel(
         if "@" in raw:
             username = raw.split("@")[0]
             match = re.search(r'\d+', username)
-            matricula = match.group() if match else username
+            if match:
+                matricula = match.group()
+            else:
+                matricula = email_to_matricula.get(raw.lower(), username)
         else:
             matricula = raw
 

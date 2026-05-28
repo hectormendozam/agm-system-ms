@@ -115,6 +115,8 @@ def reporte_calificaciones(
             )
 
         alumnos = rabbitmq_client.get_alumnos_by_materia(materia_id) or []
+        concentrado = rabbitmq_client.get_concentrado_alumnos(materia_id)
+        grades_by_matricula = {c["alumno_id"]: c for c in concentrado}
 
         datos = {
             "materia_nombre": materia_info["nombre"],
@@ -122,8 +124,16 @@ def reporte_calificaciones(
             "periodo":        "Período Activo",
             "docente":        materia_info.get("docente_nombre", ""),
             "alumnos": [
-                {"matricula": a["id"], "nombre": a["nombre"],
-                 "promedio_real": 0, "calificacion_final": 0}
+                {
+                    "matricula": a.get("matricula", str(a["id"])),
+                    "nombre": a["nombre"],
+                    "promedio_real": grades_by_matricula.get(
+                        a.get("matricula", ""), {}
+                    ).get("promedio_real", 0),
+                    "calificacion_final": grades_by_matricula.get(
+                        a.get("matricula", ""), {}
+                    ).get("calificacion_final", 0),
+                }
                 for a in alumnos
             ],
         }
@@ -226,8 +236,9 @@ def reporte_asistencias(
                 detail="No se pudo obtener la información de la materia. Verifica que ms-periodos-materias esté disponible.",
             )
 
-        alumnos  = rabbitmq_client.get_alumnos_by_materia(materia_id) or []
-        sesiones = rabbitmq_client.construir_sesiones_asistencia(alumnos, materia_id)
+        alumnos      = rabbitmq_client.get_alumnos_by_materia(materia_id) or []
+        materia_db_id = str(materia_info["id"])
+        sesiones = rabbitmq_client.construir_sesiones_asistencia(alumnos, materia_db_id)
 
         datos = {
             "materia_nombre": materia_info["nombre"],
