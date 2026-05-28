@@ -66,7 +66,7 @@ async def proxy(request: Request, service: str, path: str):
 
     # Construir URL objetivo. Algunos microservicios exponen su API bajo un prefijo
     # (p.ej. ms-periodos-materias usa '/api/'). Respetamos el prefijo definido.
-    prefix = service_config.get("path_prefix", "")
+    prefix = config.get("path_prefix", "")
     if prefix:
         url = f"http://{target_host}:{target_port}/{prefix}/{path}"
     else:
