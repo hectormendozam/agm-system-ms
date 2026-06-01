@@ -1,15 +1,15 @@
+import os
 import psycopg2
 import bcrypt
 
-# Una URL por microservicio (Railway → cada servicio tiene su propio Postgres)
 DB_URLS = {
-    "auth":              "postgresql://postgres:***REMOVED***@kodama.proxy.rlwy.net:19388/railway",
-    "periodos_materias": "postgresql://postgres:***REMOVED***@zephyr.proxy.rlwy.net:24431/railway",
-    "docentes":          "postgresql://postgres:***REMOVED***@zephyr.proxy.rlwy.net:27214/railway",
-    "calificaciones":    "postgresql://postgres:***REMOVED***@zephyr.proxy.rlwy.net:12701/railway",
-    "asistencias":       "postgresql://postgres:***REMOVED***@zephyr.proxy.rlwy.net:24819/railway",
-    "notificaciones":    "postgresql://postgres:***REMOVED***@kodama.proxy.rlwy.net:36636/railway",
-    "reportes":          "postgresql://postgres:***REMOVED***@zephyr.proxy.rlwy.net:47235/railway",
+    "auth":              os.environ["DB_URL_AUTH"],
+    "periodos_materias": os.environ["DB_URL_PERIODOS"],
+    "docentes":          os.environ["DB_URL_DOCENTES"],
+    "calificaciones":    os.environ["DB_URL_CALIFICACIONES"],
+    "asistencias":       os.environ["DB_URL_ASISTENCIAS"],
+    "notificaciones":    os.environ["DB_URL_NOTIFICACIONES"],
+    "reportes":          os.environ["DB_URL_REPORTES"],
 }
 
 
@@ -70,11 +70,9 @@ def create_admin(url: str):
 def reset_all():
     print("--- Limpiando bases de datos de PRODUCCIÓN (Railway) ---\n")
 
-    # Servicios estándar
     for name in ["notificaciones", "docentes", "calificaciones", "asistencias", "reportes"]:
         reset_service(name, DB_URLS[name])
 
-    # Django: omitir tablas internas de Django/auth
     DJANGO_SKIP = [
         "django_migrations", "django_content_type", "django_session",
         "django_admin_log", "auth_permission", "auth_group",
@@ -83,7 +81,6 @@ def reset_all():
     ]
     reset_service("periodos_materias", DB_URLS["periodos_materias"], skip_tables=DJANGO_SKIP)
 
-    # Auth: resetear y recrear admin
     reset_service("auth", DB_URLS["auth"])
     create_admin(DB_URLS["auth"])
 

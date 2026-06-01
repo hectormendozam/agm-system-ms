@@ -402,3 +402,5 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/node,django,python
 .DS_Store
+reset_db_production.py
+reset_db_production.env
